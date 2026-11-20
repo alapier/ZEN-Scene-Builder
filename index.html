@@ -2303,7 +2303,18 @@ function onClick(e) {
     else setSel([id]);
   } else if (!(e.shiftKey)) setSel([]);
 }
-canvas.addEventListener('dblclick', () => { if (draw) finishDraw(false); });
+canvas.addEventListener('dblclick', e => {            // double-click an item that belongs to an array or group: select all of it
+  if (draw) return finishDraw(false); if (editing || present) return;
+  const id = pickItem(e); if (id && items.get(id).rec.grp) selectGroups([id], e.shiftKey);
+});
+/** Select every item in the arrays / groups that the given items belong to (plus the current selection when add is true). */
+const groupMembers = g => [...items.values()].filter(i => i.rec.grp === g).map(i => i.rec.id);
+function selectGroups(ids, add) {
+  const gs = new Set(ids.map(i => items.get(i)?.rec.grp).filter(Boolean)); if (!gs.size) return;
+  const all = [...items.values()].filter(i => gs.has(i.rec.grp)).map(i => i.rec.id); setSel(add ? [...new Set([...sel, ...all])] : all);
+  toast(`${all.length} items selected`, 1400);
+}
+const groupWord = g => / array$/i.test(g) ? 'array' : 'group';
 canvas.addEventListener('pointermove', e => {
   const p = groundHit(e);
   $('#status').textContent = p ? `x ${fmtCoord(p.x)}  z ${fmtCoord(p.z)} ${UNITS}` : '';
@@ -2911,6 +2922,8 @@ function renderInspector() {
   if (!ids.length) { box.innerHTML = '<div class="empty">Nothing selected.<br>Click an object, or drag a model from the library into the scene.</div>'; return; }
   if (ids.length > 1) {
     box.innerHTML = `<div style="margin:4px 0"><b>${ids.length} items selected</b></div><div class="btns"><button data-act="dup">Duplicate</button><button data-act="lock">Lock</button><button class="danger" data-act="del">Delete</button></div><div class="btns"><button data-act="conduit" title="Adds one conduit run through the selected items, in the order you selected them">Connect with conduit</button></div><div class="muted">The gizmo moves / rotates / scales them together. Shift-click to add or remove items.</div>`;
+    const gsel = [...new Set(ids.map(i => items.get(i).rec.grp).filter(Boolean))], gall = gsel.flatMap(groupMembers);
+    if (gsel.length && gall.some(i => !sel.has(i))) box.innerHTML += `<div class="btns"><button data-act="selgrp" title="Grows the selection to every item in ${gsel.map(g => '“' + esc(g) + '”').join(', ')}">Select whole ${gsel.length > 1 ? 'arrays / groups' : groupWord(gsel[0])} (${gall.length})</button></div>`;
     return;
   }
   const it = items.get(ids[0]), r = it.rec, o = it.obj;
@@ -2947,6 +2960,7 @@ function renderInspector() {
   if (!isAsset && !sd) h += `<div class="fr"><span class="muted">Colour</span><span><input type="color" data-f="color" value="${r.color}"></span></div>
     <div class="fr"><span class="muted">Opacity</span><input type="range" min="0.1" max="1" step="0.05" data-f="opacity" value="${r.opacity}"></div>`;
   h += `<div class="fr"><span class="muted">Footprint</span><span class="muted" data-dims></span></div>
+    ${r.grp && groupMembers(r.grp).length > 1 ? `<div class="btns"><button data-act="selgrp" title="Selects every item in “${esc(r.grp)}”. Double-clicking any item in the view does the same (A on the keyboard too).">Select whole ${groupWord(r.grp)} (${groupMembers(r.grp).length})</button></div>` : ''}
     <div class="btns"><button data-act="dup">Duplicate</button><button data-act="ground" title="Sit on the ground (Y = 0)">Drop to ground</button><button data-act="lock">${r.locked ? 'Unlock' : 'Lock'}</button><button class="danger" data-act="del">Delete</button></div>`;
   if (isExt || isFence) h += `<div class="btns"><button data-act="edit" class="${editing ? 'on' : ''}">${editing ? 'Done editing' : (isRoad ? 'Edit road line' : isCond ? 'Edit conduit route' : isFence ? 'Edit fence line' : 'Edit footprint corners')}</button></div>
     ${editing ? '<div class="muted" style="font-size:11px">Drag green dots to move corners · drag white dots to add a corner · Shift-click a corner to remove it.</div>' : ''}`;
@@ -3037,6 +3051,7 @@ $('#insp').addEventListener('click', e => {
   else if (act === 'ground') { it.obj.position.y = 0; syncFields(); commit(); }
   else if (act === 'edit') setEditing(editing ? null : it.rec.id);
   else if (act === 'conduit') connectSelWithConduit();
+  else if (act === 'selgrp') selectGroups(ids, true);
   else if (act === 'addroof') queue(() => addRoofFor(it));
   else if (act === 'delroof') { roofsOf(it.rec.id).forEach(x => removeItem(x.rec.id)); renderOutliner(); renderInspector(); commit(); toast('Roof removed', 1800); }
   else if (act === 'selroof') setSel(roofsOf(it.rec.id).map(x => x.rec.id));
@@ -3208,7 +3223,7 @@ $('#welX').addEventListener('click', () => { welcomeOff = true; updateWelcome();
 $('#welMap').addEventListener('click', () => openMapPicker());
 $('#welOpen').addEventListener('click', () => openSceneDialog());
 $('#helpBtn').addEventListener('click', () => {
-  const rows = [['Left-drag', 'Orbit the view'], ['Right-drag', 'Pan'], ['Wheel', 'Zoom'], ['Click', 'Select · Shift-click adds or removes'], ['Shift-drag', 'Drag a box to select many items'], ['Q', 'Box select tool on / off'], ['W  E  R', 'Move · Rotate · Scale'], ['G', 'Grid snap on / off'], ['S', 'Surface snap on / off'],
+  const rows = [['Left-drag', 'Orbit the view'], ['Right-drag', 'Pan'], ['Wheel', 'Zoom'], ['Click', 'Select · Shift-click adds or removes'], ['Double-click', 'Select the whole array or group the item belongs to'], ['A', 'Grow the selection to its whole array or group'], ['Shift-drag', 'Drag a box to select many items'], ['Q', 'Box select tool on / off'], ['W  E  R', 'Move · Rotate · Scale'], ['G', 'Grid snap on / off'], ['S', 'Surface snap on / off'],
     ['F', 'Frame the selection, or everything'], ['B', 'Draw a building'], ['C', 'Draw conduit'], ['Enter', 'Finish the line you are drawing'], ['Backspace', 'Remove the last point while drawing'], ['Del', 'Delete the selection'],
     ['Ctrl+D', 'Duplicate'], ['Ctrl+A', 'Select everything'], ['Ctrl+Z  Ctrl+Y', 'Undo · Redo'], ['Ctrl+S  Ctrl+O', 'Save · Open'], ['Esc', 'Cancel the current tool, or clear the selection']];
   showModal(`<h3 style="margin-top:0">Mouse and keyboard</h3><div class="keys">${rows.map(([k, d]) => `<span>${k.split('  ').map(x => `<kbd>${x}</kbd>`).join(' ')}</span><span class="muted">${d}</span>`).join('')}</div>
@@ -3546,6 +3561,7 @@ addEventListener('keydown', e => {
   else if (k === 'backspace' && draw) { e.preventDefault(); draw.pts.pop(); updateDrawPreview(); }
   else if (k === 'delete' || k === 'backspace') { e.preventDefault(); deleteSel(); }
   else if (k === 'w') setTool('translate'); else if (k === 'e') setTool('rotate'); else if (k === 'r') setTool('scale');
+  else if (k === 'a') selectGroups([...sel], true);
   else if (k === 'f') frameSel();
   else if (k === 'q') setBoxMode(!boxMode);
   else if (k === 'b') startDraw('building');
