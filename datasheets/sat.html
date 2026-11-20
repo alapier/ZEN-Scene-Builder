@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8"><title>sat</title>
+<body style="margin:0;background:#222"><canvas id="c"></canvas>
+<script>
+/* Esri World Imagery with a labelled metre grid. Coordinates are metres EAST / SOUTH of (lat0, lon0).
+   ?lat0=&lon0=  reference point   &x=&z=&w=&h=  window to show (metres: east, south, width, height)   &g=10 grid step (m)
+   &px=1000  output width in pixels   &pts=x,z;x,z;...  optional polygon to draw (metres) */
+(async () => {
+  const q = new URLSearchParams(location.search), n = (k, d) => q.has(k) ? +q.get(k) : d;
+  const lat0 = n('lat0', 47.7013), lon0 = n('lon0', -117.2654), x = n('x', -100), z = n('z', -100), w = n('w', 200), h = n('h', 200), g = n('g', 10), PX = n('px', 1000);
+  // Web Mercator request: pixels are square on the ground, so the image cannot be stretched. Mercator metres = ground metres / cos(lat).
+  const R = 6378137, rad = Math.PI / 180, cosφ = Math.cos(lat0 * rad);
+  const X0 = R * lon0 * rad, Y0 = R * Math.log(Math.tan(Math.PI / 4 + lat0 * rad / 2));
+  const bb = [X0 + x / cosφ, Y0 - (z + h) / cosφ, X0 + (x + w) / cosφ, Y0 - z / cosφ].map(v => v.toFixed(2)).join(',');
+  const H = Math.round(PX * h / w), img = new Image(); img.crossOrigin = 'anonymous';
+  const ok = new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+  img.src = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bb}&bboxSR=3857&imageSR=3857&size=${Math.min(PX * 2, 4000)},${Math.min(Math.round(PX * 2 * h / w), 4000)}&format=jpg&f=image`;
+  await ok;
+  const c = document.getElementById('c'); c.width = PX; c.height = H; const ctx = c.getContext('2d'), s = PX / w;
+  ctx.drawImage(img, 0, 0, PX, H);
+  ctx.font = '13px sans-serif'; ctx.lineWidth = 1;
+  for (let m = Math.ceil(x / g) * g; m <= x + w; m += g) { const p = (m - x) * s; ctx.strokeStyle = m % (g * 5) === 0 ? 'rgba(0,255,255,.75)' : 'rgba(0,255,255,.35)'; ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, H); ctx.stroke(); ctx.fillStyle = '#000'; ctx.fillRect(p + 2, 2, 36, 15); ctx.fillStyle = '#0ff'; ctx.fillText(m, p + 4, 14); }
+  for (let m = Math.ceil(z / g) * g; m <= z + h; m += g) { const p = (m - z) * s; ctx.strokeStyle = m % (g * 5) === 0 ? 'rgba(255,255,0,.75)' : 'rgba(255,255,0,.35)'; ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(PX, p); ctx.stroke(); ctx.fillStyle = '#000'; ctx.fillRect(2, p + 2, 36, 15); ctx.fillStyle = '#ff0'; ctx.fillText(m, 4, p + 14); }
+  if (q.get('pts')) for (const poly of q.get('pts').split('|')) {
+    const P = poly.split(';').map(t => t.split(',').map(Number)); ctx.strokeStyle = '#f0f'; ctx.lineWidth = 2; ctx.beginPath();
+    P.forEach(([px, pz], i) => { const X = (px - x) * s, Y = (pz - z) * s; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }); ctx.closePath(); ctx.stroke();
+  }
+  document.title = 'DONE';
+})().catch(e => { document.title = 'ERR ' + e; });
+</script>

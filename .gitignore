@@ -1,0 +1,18 @@
+# crash-recovery copy the app rewrites every few seconds
+scenes/__autosave__.zenscene.json
+
+# commercial documents (quotes, contracts, pricing, purchase orders): kept on disk, not in the repository
+datasheets/*quote*.pdf
+datasheets/*contract*.pdf
+datasheets/*pricing*.pdf
+datasheets/po0*.pdf
+datasheets/stracker_sam.pdf
+
+# customer project documents and saved scenes: kept on disk, not in the repository
+datasheets/stracker_design.pdf
+scenes/*.zenscene.json
+datasheets/all4fencing_freeman.pdf
+datasheets/freeman_fencing.pdf
+
+# private copy of the app with the original customer / file-path notes
+*.local.*

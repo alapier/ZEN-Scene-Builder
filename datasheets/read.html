@@ -1,0 +1,24 @@
+<!doctype html><meta charset="utf-8"><title>PDF text</title>
+<body style="font:12px monospace;white-space:pre-wrap"><pre id="o">loading…</pre>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script>
+(async () => {
+  const f = new URLSearchParams(location.search).get('f');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  const pdf = await pdfjsLib.getDocument(f).promise;
+  let out = '';
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const tc = await (await pdf.getPage(p)).getTextContent();
+    out += `\n=== PAGE ${p} ===\n`;
+    let lastY = null, line = '';
+    for (const it of tc.items) {
+      const y = Math.round(it.transform[5]);
+      if (lastY !== null && Math.abs(y - lastY) > 3) { out += line.trim() + '\n'; line = ''; }
+      line += it.str + ' '; lastY = y;
+    }
+    out += line.trim() + '\n';
+  }
+  document.getElementById('o').textContent = out;
+  document.title = 'DONE';
+})().catch(e => { document.getElementById('o').textContent = 'ERR ' + e; document.title = 'ERR'; });
+</script>

@@ -1,0 +1,17 @@
+<!doctype html><meta charset="utf-8"><title>PDF view</title>
+<body style="margin:0;background:#fff"><canvas id="c"></canvas>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script>
+// ?f=file.pdf&p=page&s=scale  [&x=&y=&w=&h= crop as fractions of the page, 0-1]
+(async () => {
+  const q = new URLSearchParams(location.search), f = q.get('f'), p = +(q.get('p') || 1), s = +(q.get('s') || 1.4);
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  const pdf = await pdfjsLib.getDocument(f).promise, page = await pdf.getPage(p), vp = page.getViewport({scale: s});
+  const full = document.createElement('canvas'); full.width = vp.width; full.height = vp.height;
+  await page.render({canvasContext: full.getContext('2d'), viewport: vp}).promise;
+  const x = +(q.get('x') || 0), y = +(q.get('y') || 0), w = +(q.get('w') || 1), h = +(q.get('h') || 1);
+  const c = document.getElementById('c'); c.width = Math.round(vp.width * w); c.height = Math.round(vp.height * h);
+  c.getContext('2d').drawImage(full, Math.round(vp.width * x), Math.round(vp.height * y), c.width, c.height, 0, 0, c.width, c.height);
+  c.style.width = '100%'; document.title = 'DONE';
+})().catch(e => { document.title = 'ERR ' + e; });
+</script>

@@ -1,0 +1,46 @@
+<!doctype html><meta charset="utf-8"><title>align</title>
+<body style="margin:0;background:#222"><canvas id="c"></canvas>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script>
+/* Overlay the property plan (PDF page) on Esri satellite imagery.
+   ?lon0=&lat0=&span=600   satellite window: centre lon/lat, ground metres (square)
+   &T=x,y   satellite-pixel position of the plan anchor   &c0=x,y plan anchor in plan-pixels at s=3
+   &rot=deg &k=scale(plan px -> sat px) &op=0..1 &view=x,y,w,h (sat px crop to show) &page=2 */
+(async () => {
+  const q = new URLSearchParams(location.search), num = (k, d) => q.has(k) ? +q.get(k) : d, pair = (k, d) => (q.get(k) || d).split(',').map(Number);
+  const lon0 = num('lon0', -117.2654), lat0 = num('lat0', 47.7013), span = num('span', 600), N = 2000;
+  const R = 6378137, rad = Math.PI / 180, cosφ = Math.cos(lat0 * rad), X0 = R * lon0 * rad, Y0 = R * Math.log(Math.tan(Math.PI / 4 + lat0 * rad / 2)), half = span / 2 / cosφ;
+  const bbox = [X0 - half, Y0 - half, X0 + half, Y0 + half].map(v => v.toFixed(2)).join(',');       // Web Mercator: square pixels = square ground
+  const img = new Image(); img.crossOrigin = 'anonymous';
+  const loaded = new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+  img.src = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=3857&imageSR=3857&size=${N},${N}&format=jpg&f=image`;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  const pdf = await pdfjsLib.getDocument(q.get('f') || 'stracker_design.pdf').promise, page = await pdf.getPage(num('page', 2)), vp = page.getViewport({scale: 3});
+  const plan = document.createElement('canvas'); plan.width = vp.width; plan.height = vp.height;
+  const pc = plan.getContext('2d'); pc.fillStyle = '#fff'; pc.fillRect(0, 0, plan.width, plan.height);
+  document.title = 'rendering plan'; await page.render({canvasContext: pc, viewport: vp}).promise; document.title = 'waiting image'; await loaded; document.title = 'compositing';
+  const [Tx, Ty] = pair('T', '1000,1000'), [cx, cy] = pair('c0', '1700,1767'), rot = num('rot', 0) * Math.PI / 180, k = num('k', 1.411), op = num('op', 0.85);
+  const [vx, vy, vw, vh] = pair('view', `0,0,${N},${N}`);
+  const out = document.getElementById('c'); const W = 1000; out.width = W; out.height = W * vh / vw; const ctx = out.getContext('2d');
+  const f = W / vw; ctx.scale(f, f); ctx.translate(-vx, -vy);
+  ctx.drawImage(img, 0, 0, N, N);
+  ctx.save(); ctx.globalCompositeOperation = 'multiply'; ctx.globalAlpha = op; ctx.translate(Tx, Ty); ctx.rotate(rot); ctx.scale(k, k); ctx.translate(-cx, -cy); ctx.drawImage(plan, 0, 0); ctx.restore();
+  // 50 m grid from the satellite centre (labelled) so positions can be read off
+  const mpp = span / N; ctx.strokeStyle = 'rgba(0,255,255,.5)'; ctx.fillStyle = '#0ff'; ctx.lineWidth = 1.5 / f; ctx.font = `${14 / f}px sans-serif`;
+  for (let m = -300; m <= 300; m += 50) { const p = N / 2 + m / mpp; ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, N); ctx.moveTo(0, p); ctx.lineTo(N, p); ctx.stroke(); ctx.fillText(m + '', p + 3 / f, N / 2 - 4 / f); ctx.fillText(m + '', N / 2 + 3 / f, p - 3 / f); }
+  // find the red PV-array squares on the plan, map them through the same transform to ground metres (east, south) from the satellite centre
+  const d = pc.getImageData(0, 0, plan.width, plan.height).data, W2 = plan.width, H2 = plan.height, seen = new Uint8Array(W2 * H2), arrays = [];
+  const red = i => d[i * 4] > 170 && d[i * 4 + 1] < 90 && d[i * 4 + 2] < 90;
+  for (let i = 0; i < W2 * H2; i++) {
+    if (seen[i] || !red(i)) continue;
+    const st = [i]; seen[i] = 1; let n = 0, sx = 0, sy = 0, mnx = 1e9, mxx = -1, mny = 1e9, mxy = -1;
+    while (st.length) { const p = st.pop(), x = p % W2, y = (p / W2) | 0; n++; sx += x; sy += y; mnx = Math.min(mnx, x); mxx = Math.max(mxx, x); mny = Math.min(mny, y); mxy = Math.max(mxy, y);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) { const x2 = x + dx, y2 = y + dy; if (x2 < 0 || y2 < 0 || x2 >= W2 || y2 >= H2) continue; const q = y2 * W2 + x2; if (!seen[q] && red(q)) { seen[q] = 1; st.push(q); } } }
+    if (n > 150 && n < 60000) arrays.push({n, cx: (mnx + mxx) / 2, cy: (mny + mxy) / 2, w: mxx - mnx, h: mxy - mny});
+  }
+  const mpp2 = span / N, cr = Math.cos(rot), sr = Math.sin(rot);
+  const res = arrays.map(a => { const px = (a.cx - cx) * k, py = (a.cy - cy) * k, sxp = Tx + px * cr - py * sr, syp = Ty + px * sr + py * cr; return {east: +((sxp - N / 2) * mpp2).toFixed(1), south: +((syp - N / 2) * mpp2).toFixed(1), wm: +(a.w * k * mpp2).toFixed(1), hm: +(a.h * k * mpp2).toFixed(1)}; });
+  const pre = document.createElement('pre'); pre.id = 'arrays'; pre.textContent = JSON.stringify(res); pre.style.cssText = 'position:fixed;left:0;top:0;color:#0f0;background:#000;font-size:11px;white-space:pre-wrap;max-width:100%'; document.body.appendChild(pre);
+  document.title = 'DONE';
+})().catch(e => { document.title = 'ERR ' + e; });
+</script>
