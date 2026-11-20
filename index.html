@@ -1956,9 +1956,9 @@ function roofWings(points) {
     const key = `${i0},${i1},${k0},${k1}`; if (!seen.has(key)) { seen.add(key); rects.push({u0: U[i0], u1: U[i1 + 1], v0: V[k0], v1: V[k1 + 1]}); }
   }
   const W = r => r.u1 - r.u0, Hh = r => r.v1 - r.v0, span = r => Math.min(W(r), Hh(r)), eps = 0.05;
-  const big = rects.filter(r => span(r) >= 1.2).sort((a, b) => span(b) - span(a) || W(b) * Hh(b) - W(a) * Hh(a));
+  const big = rects.filter(r => span(r) >= 1.5).sort((a, b) => span(b) - span(a) || W(b) * Hh(b) - W(a) * Hh(a));
   const done = [], wings = [];
-  const wing = (r, alongU, eN, eP, xN, xP) => { const L = alongU ? W(r) : Hh(r), S = alongU ? Hh(r) : W(r); if (L < 0.6 || S < 1.0) return; wings.push([r3((r.u0 + r.u1) / 2 - uc), r3((r.v0 + r.v1) / 2 - vc), r3(L), r3(S), alongU ? 0 : 1, eN, eP, r3(xN), r3(xP)]); };
+  const wing = (r, alongU, eN, eP, xN, xP) => { const L = alongU ? W(r) : Hh(r), S = alongU ? Hh(r) : W(r); if (L < 0.6 || S < 1.5) return; wings.push([r3((r.u0 + r.u1) / 2 - uc), r3((r.v0 + r.v1) / 2 - vc), r3(L), r3(S), alongU ? 0 : 1, eN, eP, r3(xN), r3(xP)]); };
   for (const R of big) {
     let pieces = [{...R, whole: true}];
     for (const D of done) {
@@ -1986,33 +1986,72 @@ function roofWings(points) {
   if (wings.length > 16) wings.length = 16;                                                 // the biggest sections come first
   return {...base, wings};
 }
-/** One roof wing. Local frame: ridge along X, y = 0 at the top of the walls. ends = [type at -X, type at +X] from 'gable' | 'hip' | 'join'. */
-function buildWing(L, S, ends, exts, o) {
-  const g = new THREE.Group(), k = kit(g), t = Math.tan(rad(o.pitch)), th = Math.atan(t), ov = o.overhang, b = S / 2 + ov, e = -ov * t, h = S / 2 * t, T = ROOF_DECK;
-  const a = [0, 1].map(i => L / 2 + (ends[i] === 'gable' ? o.rake : ends[i] === 'hip' ? ov : exts[i])), rg = [0, 1].map(i => ends[i] === 'hip' ? Math.max(0, L / 2 - S / 2) : a[i]);       // eave end and ridge end, measured from the middle
-  const xN = -a[0], xP = a[1], rN = -rg[0], rP = rg[1], cs = Math.cos(th), pos = [], uv = [];
-  const tri = (A, B, C, f) => { for (const v of [A, B, C]) { pos.push(v[0], v[1], v[2]); const q = f(v); uv.push(q[0], q[1]); } };
-  const side = v => [(b - Math.abs(v[2])) / cs, v[0]], endF = (xe) => v => [Math.abs(xe - v[0]) / cs, v[2]];           // [distance up the slope, distance along the eave], metres
-  tri([xN, e, b], [xP, e, b], [rP, h, 0], side); tri([xN, e, b], [rP, h, 0], [rN, h, 0], side);
-  tri([xP, e, -b], [xN, e, -b], [rN, h, 0], side); tri([xP, e, -b], [rN, h, 0], [rP, h, 0], side);
-  if (ends[0] === 'hip') tri([xN, e, -b], [xN, e, b], [rN, h, 0], endF(xN));
-  if (ends[1] === 'hip') tri([xP, e, b], [xP, e, -b], [rP, h, 0], endF(xP));
+/** All the wings of one roof, drawn as a single clean surface. Each wing is a simple roof (two slopes, plus a sloping end where it is hipped); where
+    wings overlap only the highest surface is kept, so they meet in true valleys and nothing pokes through. Trim follows the same rule: fascia runs
+    only along eaves that are really outside, and ridge caps stop where a ridge disappears under a higher roof.
+    wings: [x, z, length along ridge, span, turned, end at -ridge, end at +ridge, extension at -ridge, extension at +ridge]; free = 'gable' | 'hip'. */
+function buildWingRoof(wings, o, free) {
+  const g = new THREE.Group(), k = kit(g), t = Math.tan(rad(o.pitch)), th = Math.atan(t), cs = Math.cos(th), ov = o.overhang, T = ROOF_DECK, e = -ov * t;
+  const W = wings.map(w => {
+    const [x0, z0, L, S, turned] = w, ends = [w[5] === 'join' ? 'join' : free, w[6] === 'join' ? 'join' : free], ext = [w[7] || 0, w[8] || 0], b = S / 2 + ov, h = S / 2 * t;
+    const a = [0, 1].map(i => L / 2 + (ends[i] === 'gable' ? o.rake : ends[i] === 'hip' ? ov : ext[i])), rg = [0, 1].map(i => ends[i] === 'hip' ? Math.max(0, L / 2 - S / 2) : a[i]), xN = -a[0], xP = a[1], rN = -rg[0], rP = rg[1];
+    const toW = (lx, lz) => turned ? [x0 - lz, z0 + lx] : [x0 + lx, z0 + lz], toL = (x, z) => turned ? [z - z0, -(x - x0)] : [x - x0, z - z0];
+    const pl = [[h, 0, -t], [h, 0, t]], faces = [{poly: [[xN, b], [xP, b], [rP, 0], [rN, 0]], p: 0}, {poly: [[xP, -b], [xN, -b], [rN, 0], [rP, 0]], p: 1}];       // planes: y = c + cx * lx + cz * lz
+    if (ends[0] === 'hip') { const m = (h - e) / Math.max(0.01, rN - xN); pl.push([e - m * xN, m, 0]); faces.push({poly: [[xN, -b], [xN, b], [rN, 0]], p: pl.length - 1, end: xN}); }
+    if (ends[1] === 'hip') { const m = (h - e) / Math.max(0.01, xP - rP); pl.push([e + m * xP, -m, 0]); faces.push({poly: [[xP, b], [xP, -b], [rP, 0]], p: pl.length - 1, end: xP}); }
+    const plane = n => q => { const l = toL(q[0], q[1]); return pl[n][0] + pl[n][1] * l[0] + pl[n][2] * l[1]; };
+    const hAt = (x, z) => { const l = toL(x, z); if (l[0] < xN - 1e-6 || l[0] > xP + 1e-6 || Math.abs(l[1]) > b + 1e-6) return -Infinity; let m = Infinity; for (const q of pl) m = Math.min(m, q[0] + q[1] * l[0] + q[2] * l[1]); return m; };
+    const c1 = toW(xN, -b), c2 = toW(xP, b), rect = [Math.min(c1[0], c2[0]), Math.max(c1[0], c2[0]), Math.min(c1[1], c2[1]), Math.max(c1[1], c2[1])];
+    return {x0, z0, L, S, turned, ends, b, h, xN, xP, rN, rP, toW, toL, pl, faces, plane, hAt, rect};
+  });
+  const clip = (P, f) => { const out = []; for (let i = 0; i < P.length; i++) { const A = P[i], B = P[(i + 1) % P.length], fa = f(A), fb = f(B); if (fa >= 0) out.push(A); if ((fa >= 0) !== (fb >= 0)) { const u = fa / (fa - fb); out.push([A[0] + (B[0] - A[0]) * u, A[1] + (B[1] - A[1]) * u]); } } return out; };
+  const area = P => { let A = 0; for (let i = 0; i < P.length; i++) { const n = P[(i + 1) % P.length]; A += P[i][0] * n[1] - n[0] * P[i][1]; } return Math.abs(A) / 2; };
+  const pos = [], uv = [];
+  W.forEach((A, ai) => A.faces.forEach(F => {
+    const pa = A.plane(F.p); let pieces = [F.poly.map(q => A.toW(q[0], q[1]))];
+    W.forEach((B, bi) => {
+      if (bi === ai || !pieces.length) return; const tie = bi < ai ? 1e-5 : -1e-5, r = B.rect;                    // where two roofs are level, the earlier (bigger) wing keeps the surface
+      const Hs = [q => q[0] - r[0], q => r[1] - q[0], q => q[1] - r[2], q => r[3] - q[1], ...B.pl.map((_, n) => { const pb = B.plane(n); return q => pb(q) - pa(q) + tie; })];
+      const next = [];
+      for (const Q of pieces) { let rem = Q; for (const H of Hs) { const out = clip(rem, q => -H(q)); if (out.length >= 3 && area(out) > 1e-4) next.push(out); rem = clip(rem, H); if (rem.length < 3 || area(rem) < 1e-5) break; } }      // what is left in rem lies under roof B: dropped
+      pieces = next;
+    });
+    for (const Q of pieces) for (let i = 1; i < Q.length - 1; i++) {
+      let tri = [Q[0], Q[i], Q[i + 1]]; const y = tri.map(q => pa(q));
+      if ((tri[1][1] - tri[0][1]) * (tri[2][0] - tri[0][0]) - (tri[1][0] - tri[0][0]) * (tri[2][1] - tri[0][1]) < 0) { tri = [tri[0], tri[2], tri[1]]; const s1 = y[1]; y[1] = y[2]; y[2] = s1; }       // face up
+      tri.forEach((q, n) => { pos.push(q[0], y[n], q[1]); const l = A.toL(q[0], q[1]); if (F.end !== undefined) uv.push(Math.abs(l[0] - F.end) / cs, l[1]); else uv.push((A.b - Math.abs(l[1])) / cs, l[0]); });
+    }
+  }));
   const top = new THREE.BufferGeometry(); top.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); top.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); top.computeVertexNormals();
   const deck = new THREE.Mesh(top, o.skin); deck.userData.roofSkin = true; g.add(deck);
   const under = top.clone(); under.translate(0, -T, 0); g.add(new THREE.Mesh(under, o.soffit));                          // soffit: the underside of the overhang
-  const fw = 0.025, fh = T + 0.03, fy = e - T / 2 + 0.005;
-  for (const sg of [1, -1]) k.box(xP - xN + 2 * fw, fh, fw, o.trim, (xP + xN) / 2, fy, sg * (b + fw / 2));                // fascia boards along the eaves
-  [0, 1].forEach(i => { const x = i ? xP : xN, sx = i ? 1 : -1;
-    if (ends[i] === 'hip') { k.box(fw, fh, 2 * b + 2 * fw, o.trim, x + sx * fw / 2, fy, 0);
-      for (const sg of [1, -1]) k.rod(new THREE.Vector3(x, e + 0.02, sg * b), new THREE.Vector3(i ? rP : rN, h + 0.02, 0), 0.045, o.cap, 6); }      // hip caps
-    if (ends[i] === 'gable') {
-      const len = Math.hypot(b, h - e);
-      for (const sg of [1, -1]) { const bd = k.box(fw, fh, len + 0.02, o.trim, x + sx * fw / 2, (e + h) / 2 - T / 2 + 0.005, sg * b / 2); bd.rotation.x = sg * th; }      // barge boards up the rake
-      const wx = sx * L / 2, wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute([wx, 0, -S / 2, wx, 0, S / 2, wx, h, 0], 3)); wg.computeVertexNormals();
-      g.add(new THREE.Mesh(wg, o.wall));                                                                                    // gable-end wall, on the wall line
-    }
+  const fw = 0.025, fh = T + 0.03, fy = e - T / 2 + 0.005, others = ai => W.filter((_, n) => n !== ai);
+  const outside = (P, Q, ai) => {            // the parts of an axis-aligned eave line that are not inside another wing's outline
+    const ax = Math.abs(P[0] - Q[0]) > Math.abs(P[1] - Q[1]) ? 0 : 1, fx = P[1 - ax]; let iv = [[Math.min(P[ax], Q[ax]), Math.max(P[ax], Q[ax])]];
+    for (const B of others(ai)) { const r = B.rect, lo = r[ax * 2], hi = r[ax * 2 + 1]; if (fx <= r[(1 - ax) * 2] + 0.02 || fx >= r[(1 - ax) * 2 + 1] - 0.02) continue;
+      iv = iv.flatMap(([c, d]) => hi <= c || lo >= d ? [[c, d]] : [[c, Math.min(d, lo)], [Math.max(c, hi), d]].filter(q => q[1] - q[0] > 0.03)); }
+    return iv.map(([c, d]) => ({ax, fx, c, d}));
+  };
+  W.forEach((A, ai) => {
+    const eaves = [[A.toW(A.xN, A.b), A.toW(A.xP, A.b), A.toW(0, 1)], [A.toW(A.xN, -A.b), A.toW(A.xP, -A.b), A.toW(0, -1)]];
+    if (A.ends[0] === 'hip') eaves.push([A.toW(A.xN, -A.b), A.toW(A.xN, A.b), A.toW(-1, 0)]); if (A.ends[1] === 'hip') eaves.push([A.toW(A.xP, -A.b), A.toW(A.xP, A.b), A.toW(1, 0)]);
+    for (const [P, Q, N] of eaves) { const nx = N[0] - A.x0, nz = N[1] - A.z0;                                             // fascia boards, on the outside of the eave line
+      for (const sgm of outside(P, Q, ai)) { const len = sgm.d - sgm.c + 2 * fw, mid = (sgm.c + sgm.d) / 2; if (sgm.ax === 0) k.box(len, fh, fw, o.trim, mid, fy, sgm.fx + nz * fw / 2); else k.box(fw, fh, len, o.trim, sgm.fx + nx * fw / 2, fy, mid); } }
+    const higher = (x, z, y) => others(ai).some(B => B.hAt(x, z) > y);
+    let run = null; const cap = (u0, u1) => { const P = A.toW(u0, 0), Q = A.toW(u1, 0), len = Math.abs(u1 - u0); if (len < 0.25) return; if (A.turned) k.box(0.3, 0.04, len, o.cap, P[0], A.h + 0.012, (P[1] + Q[1]) / 2); else k.box(len, 0.04, 0.3, o.cap, (P[0] + Q[0]) / 2, A.h + 0.012, P[1]); };
+    for (let u = A.rN; u <= A.rP + 1e-6; u += 0.2) { const q = A.toW(Math.min(u, A.rP), 0), vis = !higher(q[0], q[1], A.h + 0.02); if (vis && run === null) run = u; if (!vis && run !== null) { cap(run, u - 0.2); run = null; } }      // ridge cap, only where the ridge shows
+    if (run !== null) cap(run, A.rP);
+    const loc = new THREE.Group(), kl = kit(loc); loc.position.set(A.x0, 0, A.z0); loc.rotation.y = A.turned ? -Math.PI / 2 : 0; g.add(loc);      // end trim, built in the wing's own frame (ridge along X)
+    [0, 1].forEach(i => { const x = i ? A.xP : A.xN, sx = i ? 1 : -1, ridgeEnd = A.toW(i ? A.rP : A.rN, 0), eaveMid = A.toW(x - sx * 0.05, 0);
+      if (A.ends[i] === 'hip' && !higher(eaveMid[0], eaveMid[1], e + 0.05)) for (const sg of [1, -1]) kl.rod(new THREE.Vector3(x, e + 0.02, sg * A.b), new THREE.Vector3(i ? A.rP : A.rN, A.h + 0.02, 0), 0.045, o.cap, 6);      // hip caps
+      if (A.ends[i] === 'gable' && !higher(A.toW(x - sx * 0.05, 0)[0], A.toW(x - sx * 0.05, 0)[1], A.h - 0.02)) {
+        const len = Math.hypot(A.b, A.h - e);
+        for (const sg of [1, -1]) { const bd = kl.box(fw, fh, len + 0.02, o.trim, x + sx * fw / 2, (e + A.h) / 2 - T / 2 + 0.005, sg * A.b / 2); bd.rotation.x = sg * th; }      // barge boards up the rake
+        const wx = sx * A.L / 2, wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute([wx, 0, -A.S / 2, wx, 0, A.S / 2, wx, A.h, 0], 3)); wg.computeVertexNormals();
+        loc.add(new THREE.Mesh(wg, o.wall));                                                                                // gable-end wall, on the wall line
+      }
+    });
   });
-  if (rP - rN > 0.3) k.box(rP - rN, 0.04, 0.3, o.cap, (rP + rN) / 2, h + 0.012, 0);                                         // ridge cap
   return g;
 }
 /** Adds a roof for a building as its own item: split into wings that follow the footprint, turned to match, sitting on top of the walls. */
@@ -2038,8 +2077,7 @@ function buildRoofPart(def, p) {
     trim: PM(p.trim || '#f2f1ec', 0.7, 0), soffit: PM(p.trim || '#f2f1ec', 0.9, 0, {side: THREE.DoubleSide}), cap: PM('#' + new THREE.Color(col).multiplyScalar(0.72).getHexString(), ROOF_TEX[fin].metal ? 0.45 : 0.85, ROOF_TEX[fin].metal ? 0.5 : 0.05)};
   o.wall = PM(p.ends || '#d8d2c4', 0.9, 0, {side: THREE.DoubleSide});
   const free = p.style === 'hip' ? 'hip' : 'gable';
-  for (const w of wings) { const m = buildWing(w[2], w[3], [w[5] === 'join' ? 'join' : free, w[6] === 'join' ? 'join' : free], [w[7] || 0, w[8] || 0], o); m.position.set(w[0], 0, w[1]); m.rotation.y = w[4] ? -Math.PI / 2 : 0; g.add(m); }
-  return g;
+  return buildWingRoof(wings, o, free);
 }
 function applyRoof(obj, rec) {            // (re)build the roof of a drawn building from its record
   obj.children.filter(c => c.userData.roof).forEach(c => { c.traverse(m => { if (m.isMesh) m.geometry.dispose(); }); obj.remove(c); });
