@@ -982,6 +982,18 @@ const SceneStore = {
    Scale is locked at 1:1 for these items so a drawn scene can never drift from real size. */
 const MM = 0.001;
 const DRIVE = 'ZEN equipment specs › ';
+/* Mounting options shared by every panel part. "Loose" is the bare module; "Roof mount" lays out rows of that module on rails with roof attachments,
+   clamps and optional tilt legs (see buildRoofArray). The roof-mount fields only show while Roof mount is chosen. */
+const onRoof = q => q.mount === 'roof';
+const PANEL_MOUNT = [
+  {k: 'mount', label: 'Mounting', type: 'select', options: [['none', 'Loose panel'], ['roof', 'Roof mount (rails, feet, tilt legs)']], def: 'none', rerender: true},
+  {k: 'orient', label: 'Orientation', type: 'select', options: [['portrait', 'Portrait'], ['landscape', 'Landscape']], def: 'portrait', when: onRoof},
+  {k: 'cols', label: 'Modules across', type: 'number', min: 1, max: 40, step: 1, def: 6, when: onRoof},
+  {k: 'rows', label: 'Rows up the roof', type: 'number', min: 1, max: 8, step: 1, def: 2, when: onRoof},
+  {k: 'tilt', label: 'Tilt off the roof (°)', type: 'number', min: 0, max: 40, step: 1, def: 0, when: onRoof},
+  {k: 'attach', label: 'Roof attachment', type: 'select', options: [['rtmini', 'Flashed mount (shingle / membrane)'], ['s5', 'S-5! SolarFoot (metal roof)']], def: 'rtmini', when: onRoof},
+  {k: 'span', label: 'Attachment spacing (m)', type: 'number', min: 0.6, max: 2.4, step: 0.05, def: 1.22, when: onRoof}
+];
 const MODS = [
   {id: 'mod-sil410', name: 'Silfab SIL-410-BG · 410 W', short: 'Silfab 410W', dims: [1864, 1029, 35], kg: 20.8, cells: [6, 11], frame: '#15171a', cell: '#0a0c0f',
    conf: 'datasheet', src: DRIVE + 'SILFAB_SIL-410-BG_data sheet.pdf (rev 2025-05-27)', note: 'Datasheet gives H×L×D 1864 × 1029 × 35 mm.'},
@@ -994,7 +1006,7 @@ const MODS = [
   {id: 'mod-srp595', name: 'Seraphim SRP-595-BTA-BG · 595 W', short: 'Seraphim 595W', dims: [2278, 1134, 30], kg: 32, cells: [6, 24], frame: '#2a2d31', cell: '#0f2142',
    conf: 'web', src: 'Reseller listings for SRP-595-BTA-BG (89.69 × 44.65 × 1.18 in, ~70.5 lb); Seraphim\'s own PDF for this exact part was not found',
    note: 'The module on a ZEN tracker design (168 × SRP-595-BTA-BG). A sibling model (SEG-595-BTA-BG) is 35 mm thick — confirm the frame depth on the delivered panels. The Stracker rails are drilled for this module, so Stracker must pre-approve any change.'}
-].map(m => ({...m, cat: 'Panels', kind: 'module', dimLabel: 'L × W × T'}));
+].map(m => ({...m, cat: 'Panels', kind: 'module', dimLabel: 'L × W × T', params: PANEL_MOUNT}));
 const STD = [
   ...MODS,
   {id: 'gm-table', cat: 'Racking', name: 'Ground-mount table (parametric)', short: 'Ground mount', kind: 'table', dims: null, dimLabel: '',
@@ -1009,7 +1021,7 @@ const STD = [
      {k: 'clear', label: 'Low edge (m)', type: 'number', min: 0.1, max: 3, step: 0.05, def: 0.9},
      {k: 'span', label: 'Post spacing (m)', type: 'number', min: 1, max: 6, step: 0.1, def: 3}
    ]},
-  {id: 'roof-array', cat: 'Racking', name: 'Roof-mount array · rails on roof attachments (parametric)', short: 'Roof mount', kind: 'roofmount', dims: null, dimLabel: '',
+  {id: 'roof-array', legacy: true, cat: 'Racking', name: 'Roof-mount array · rails on roof attachments (parametric)', short: 'Roof mount', kind: 'roofmount', dims: null, dimLabel: '',
    conf: 'standard', src: 'Rail: IronRidge XR10 cut sheet (1.75 in tall). Attachments: Roof Tech RT-MINI II for shingle and membrane roofs, S-5! SolarFoot for exposed-fastener metal roofs (ZEN equipment sheets).',
    note: 'Modules are exact. Rails, L-feet, clamps and tilt legs are representative: the layout, attachment spacing and tilt-leg sizes come from the racking maker\'s engineering. Turn on Surface snap with Match angle and drag it onto a roof slope: it sits square to the slope with its front facing down-slope. Tilt 0 is flush to the roof; a higher tilt lifts the upper edge of each row on legs.',
    params: [
@@ -1777,7 +1789,7 @@ function stdTemplate(def, params = {}) {
   if (def.kind === 'tracker' && p.mode === 'sun') p = {...p, az: env.sunAz, tilt: Math.max(0, Math.min(60, 90 - env.sunEl))};   // dual-axis: face the sun
   const key = def.id + JSON.stringify(p);
   if (_tpl.has(key)) return _tpl.get(key);
-  const g = {module: () => buildModule(def), device: () => buildDevice(def), cabinet: () => buildCabinet(def), xfmr: () => buildXfmr(def, p), gate: buildGate,
+  const g = {module: () => p.mount === 'roof' ? buildRoofArray(def, {...p, module: def.id}) : buildModule(def), device: () => buildDevice(def), cabinet: () => buildCabinet(def), xfmr: () => buildXfmr(def, p), gate: buildGate,
     fence: () => buildFence({points: [[-3.048, 0], [3.048, 0]], closed: '0', height: CHAIN.H, spacing: 3.048}),   // library thumbnail sample
     road: () => buildRoad({points: [[-9, 3], [0, 3], [6, -3], [14, -3]], width: 6.7, marking: 'dash'}, ROAD_COLOR), parking: () => buildParking(def, p),
     conduit: () => buildConduit({points: [[-1.2, 0.5], [0.4, 0.5], [0.4, -0.7]], size: '4', count: 2, style: 'pipe', height: 0, r0: 0, r1: 0.9}, CONDUIT_COLOR),   // library thumbnail sample
@@ -2702,7 +2714,7 @@ const STD_CATS = [...new Set([...STD.map(d => d.cat), ...CATS])];      // catego
 const assetDim = a => a.dim ? a.dim.map(v => UNITS === 'ft' ? (v / FT).toFixed(1) : v >= 10 ? v.toFixed(1) : v.toFixed(2)).join(' × ') + ' ' + UNITS : (a.size / 1048576).toFixed(1) + ' MB';
 function renderStdLibrary() {
   $('#dropzone').style.display = ''; $('#dropzone').innerHTML = 'Drop <b>.glb</b> files here to add them to ZEN standard<br><small>or click to browse</small>';
-  const parts = STD.filter(d => !hiddenStd.has(d.id)), mine = [...lib.values()].filter(a => a.std).sort((a, b) => a.name.localeCompare(b.name));
+  const parts = STD.filter(d => !hiddenStd.has(d.id) && !d.legacy), mine = [...lib.values()].filter(a => a.std).sort((a, b) => a.name.localeCompare(b.name));
   $('#libCount').textContent = `${parts.length} true-scale parts` + (mine.length ? ` · ${mine.length} of yours` : '');
   const counts = {}; parts.forEach(d => counts[d.cat] = (counts[d.cat] || 0) + 1); mine.forEach(a => counts[a.category] = (counts[a.category] || 0) + 1);
   if (libFilter !== 'All' && !counts[libFilter]) libFilter = 'All';
@@ -2894,6 +2906,7 @@ function renderInspector() {
     if (r.params && Array.isArray(r.params.wings) && r.params.wings.length > 1) h += `<div class="muted small">Shaped to its building in ${r.params.wings.length} sections.</div>`;
     (sd.params || []).forEach(pm => {
       if ((pm.k === 'len' || pm.k === 'span') && r.params && Array.isArray(r.params.wings)) return;
+      if (pm.when && !pm.when({...stdDefaults(sd), ...(r.params || {})})) return;
       const v = (r.params && r.params[pm.k] != null) ? r.params[pm.k] : pm.def;
       h += pm.type === 'select'
         ? `<div class="fr"><span class="muted">${pm.label}</span><select data-p="${pm.k}">${pm.options.map(([val, lab]) => `<option value="${val}" ${val === v ? 'selected' : ''}>${esc(lab)}</option>`).join('')}</select></div>`
@@ -2955,7 +2968,7 @@ $('#insp').addEventListener('input', e => {
     if (it.rec.type === 'conduit') lastConduit[pk] = v;      // the next run you draw starts with these settings
     if (it.rec.stdId === 'roof' && pk !== 'len' && pk !== 'span') lastRoofPart[pk] = v;
     if (it.rec.type === 'road' && pk === 'width') lastRoadWidth = v;
-    refill(it); if (editing) buildHandles(); syncFields(); return;
+    refill(it); if (editing) buildHandles(); if (def.rerender) renderInspector(); else syncFields(); return;
   }
   const rk = e.target.dataset.r;
   if (rk) {       // roof of a drawn building
