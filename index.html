@@ -1009,6 +1009,18 @@ const STD = [
      {k: 'clear', label: 'Low edge (m)', type: 'number', min: 0.1, max: 3, step: 0.05, def: 0.9},
      {k: 'span', label: 'Post spacing (m)', type: 'number', min: 1, max: 6, step: 0.1, def: 3}
    ]},
+  {id: 'roof-array', cat: 'Racking', name: 'Roof-mount array · rails on roof attachments (parametric)', short: 'Roof mount', kind: 'roofmount', dims: null, dimLabel: '',
+   conf: 'standard', src: 'Rail: IronRidge XR10 cut sheet (1.75 in tall). Attachments: Roof Tech RT-MINI II for shingle and membrane roofs, S-5! SolarFoot for exposed-fastener metal roofs (ZEN equipment sheets).',
+   note: 'Modules are exact. Rails, L-feet, clamps and tilt legs are representative: the layout, attachment spacing and tilt-leg sizes come from the racking maker\'s engineering. Turn on Surface snap with Match angle and drag it onto a roof slope: it sits square to the slope with its front facing down-slope. Tilt 0 is flush to the roof; a higher tilt lifts the upper edge of each row on legs.',
+   params: [
+     {k: 'module', label: 'Module', type: 'select', options: MODS.map(m => [m.id, m.name]), def: 'mod-sil410'},
+     {k: 'orient', label: 'Orientation', type: 'select', options: [['portrait', 'Portrait'], ['landscape', 'Landscape']], def: 'portrait'},
+     {k: 'cols', label: 'Modules across', type: 'number', min: 1, max: 40, step: 1, def: 6},
+     {k: 'rows', label: 'Rows up the roof', type: 'number', min: 1, max: 8, step: 1, def: 2},
+     {k: 'tilt', label: 'Tilt off the roof (°)', type: 'number', min: 0, max: 40, step: 1, def: 0},
+     {k: 'attach', label: 'Roof attachment', type: 'select', options: [['rtmini', 'Flashed mount (shingle / membrane)'], ['s5', 'S-5! SolarFoot (metal roof)']], def: 'rtmini'},
+     {k: 'span', label: 'Attachment spacing (m)', type: 'number', min: 0.6, max: 2.4, step: 0.05, def: 1.22}
+   ]},
   {id: 'inv-se173', cat: 'Inverters', name: 'SolarEdge SE17.3KUS · 17.3 kW', short: 'SE17.3K', kind: 'device', dims: [808, 317, 300], dimLabel: 'H × W × D', kg: 35.5, body: '#e6e9ec', panel: '#f7f8f9', conf: 'datasheet',
    src: DRIVE + 'SOLAREDGE_SE17.3KUS_data sheet.pdf', note: 'With Safety Switch: 31.8 × 12.5 × 11.8 in. Three-phase 120/208 V, NEMA 3R.'},
   {id: 'syn-unit', cat: 'Inverters', name: 'SolarEdge Synergy Unit', short: 'Synergy Unit', kind: 'device', dims: [558, 328, 273], dimLabel: 'H × W × D', kg: 32, body: '#e6e9ec', panel: '#f7f8f9', conf: 'datasheet',
@@ -1108,7 +1120,7 @@ const STD = [
 const STD_BY = Object.fromEntries(STD.map(d => [d.id, d]));
 const CONF_LABEL = {datasheet: 'Datasheet', quote: 'ZEN quote', web: 'Web spec', standard: 'Standard'};
 const dimText = d => d.dims ? (d.kind === 'person' ? (UNITS === 'ft' ? '5 ft 9 in tall' : '1750 mm tall') : UNITS === 'ft' ? d.dims.map(v => +(v / 25.4).toFixed(1)).join(' × ') + ' in' : d.dims.map(v => +v.toFixed(1)).join(' × ') + ' mm')
-  : ({table: 'parametric', rack: 'parametric · strut on two posts', xfmr: '150–1000 kVA', fence: 'draw · 6 ft high', conduit: 'draw · 1/2"–4" trade sizes', road: 'draw · set the width', parking: 'parametric · 9 × 18 ft stalls', tracker: '30 × 26 ft array · 21 ft pole'}[d.kind] || '3 units + Manager');
+  : ({table: 'parametric', roofmount: 'parametric · rails, feet, tilt legs', rack: 'parametric · strut on two posts', xfmr: '150–1000 kVA', fence: 'draw · 6 ft high', conduit: 'draw · 1/2"–4" trade sizes', road: 'draw · set the width', parking: 'parametric · 9 × 18 ft stalls', tracker: '30 × 26 ft array · 21 ft pole'}[d.kind] || '3 units + Manager');
 
 const _stdMats = new Map();
 function stdMat(key, make) { if (!_stdMats.has(key)) _stdMats.set(key, make()); return _stdMats.get(key); }
@@ -1442,6 +1454,37 @@ function buildTable(def, p) {
   }
   return g;
 }
+/** Roof-mount array. Local frame: y = 0 is the roof surface, X runs level along the rails, +Z points down the slope. Each row of modules sits on two
+    aluminium rails; every rail is held by L-feet on roof attachments, and with a tilt above zero the upper rail of each row stands on tilt legs. */
+function buildRoofArray(def, p) {
+  const mdef = STD_BY[p.module] || STD_BY['mod-sil410'], [L, W, T] = mdef.dims.map(v => v * MM), port = p.orient !== 'landscape', along = port ? L : W, across = port ? W : L, gap = 0.02;
+  const cols = Math.max(1, Math.min(40, Math.round(p.cols))), rows = Math.max(1, Math.min(8, Math.round(p.rows))), t = rad(Math.max(0, Math.min(40, p.tilt))), span = Math.max(0.6, +p.span || 1.22);
+  const Wt = cols * across + (cols - 1) * gap, RH = 0.0445, RW = 0.042, H0 = 0.05 + RH, pitch = along * Math.cos(t) + (t > 0.01 ? along * Math.sin(t) * 1.6 : 0) + gap;       // tilted rows are spaced so they do not shade each other at low sun
+  const g = new THREE.Group(), k = kit(g), tpl = stdTemplate(mdef), alu = PM('#c3c8cc', 0.4, 0.75), dark = PM('#2b2f33', 0.5, 0.5), base = p.attach === 's5' ? PM('#aeb4b9', 0.4, 0.8) : PM('#3b4046', 0.7, 0.2);
+  const n = new THREE.Vector3(0, Math.cos(t), Math.sin(t)), up = new THREE.Vector3(0, Math.sin(t), -Math.cos(t)), nAtt = Math.max(2, Math.ceil((Wt - 0.3) / span) + 1);
+  for (let r = 0; r < rows; r++) {
+    const low = new THREE.Vector3(0, H0, (rows - 1) / 2 * pitch - r * pitch + along * Math.cos(t) / 2);                       // lower edge of this row, underside of the modules
+    for (let c = 0; c < cols; c++) {
+      const holder = new THREE.Group(), m = tpl.clone(true); m.rotation.y = port ? 0 : Math.PI / 2; holder.add(m); holder.rotation.x = t;
+      holder.position.copy(low).addScaledVector(up, along / 2); holder.position.x = -Wt / 2 + c * (across + gap) + across / 2; g.add(holder);
+    }
+    for (const f of [0.22, 0.78]) {
+      const rc = low.clone().addScaledVector(up, along * f).addScaledVector(n, -RH / 2), rail = k.box(Wt + 0.08, RH, RW, alu, 0, rc.y, rc.z); rail.rotation.x = t;
+      for (let c = 0; c <= cols; c++) {                                                                                       // clamps: one at each end, one between neighbouring modules
+        const cx = c === 0 ? -Wt / 2 - 0.012 : c === cols ? Wt / 2 + 0.012 : -Wt / 2 + c * (across + gap) - gap / 2, top = low.clone().addScaledVector(up, along * f).addScaledVector(n, T / 2 + 0.004);
+        const cl = k.box(c === 0 || c === cols ? 0.03 : 0.045, T + 0.012, 0.038, dark, cx, top.y, top.z); cl.rotation.x = t;
+      }
+      for (let a = 0; a < nAtt; a++) {
+        const x = -Wt / 2 + 0.15 + a * (Wt - 0.3) / (nAtt - 1), foot = rc.y - RH / 2;                                        // height from the roof to the underside of the rail
+        if (p.attach === 's5') k.box(0.07, 0.022, 0.09, base, x, 0.011, rc.z); else { k.box(0.1, 0.012, 0.12, base, x, 0.006, rc.z); k.box(0.2, 0.002, 0.26, PM('#6b7178', 0.6, 0.4), x, 0.001, rc.z - 0.04); }
+        if (foot < 0.14) { k.box(0.05, Math.max(0.02, foot + RH * 0.8), 0.006, alu, x, (foot + RH * 0.8) / 2, rc.z + RW / 2 + 0.003); k.box(0.05, 0.006, 0.05, alu, x, 0.025, rc.z + 0.012); }       // L-foot
+        else { k.box(0.038, foot, 0.038, alu, x, foot / 2, rc.z); k.box(0.06, 0.008, 0.08, alu, x, 0.026, rc.z);                    // tilt leg on a foot plate
+          if (f > 0.5 && foot > 0.35) k.rod(new THREE.Vector3(x, foot * 0.85, rc.z), new THREE.Vector3(x, 0.06, rc.z + Math.min(along * 0.5, foot * 0.9)), 0.012, alu, 8); }
+      }
+    }
+  }
+  return g;
+}
 /** Free-standing NEMA cabinet (BESS enclosure, PCS): dims = [H, W, D] mm. Doors face +Z. */
 function mBESS(k, H, W, D) {                                 // outdoor NEMA 3R battery enclosure: plinth, double doors, cooling grilles, HMI, E-stop, placards
   const paint = PM('#e6e8ea', 0.5, 0.1), door = PM('#dcdfe2', 0.5, 0.1), dark = PM('#30353a', 0.6, 0.3), steel = PM('#b8bec4', 0.35, 0.8);
@@ -1723,7 +1766,7 @@ function stdTemplate(def, params = {}) {
     fence: () => buildFence({points: [[-3.048, 0], [3.048, 0]], closed: '0', height: CHAIN.H, spacing: 3.048}),   // library thumbnail sample
     road: () => buildRoad({points: [[-9, 3], [0, 3], [6, -3], [14, -3]], width: 6.7, marking: 'dash'}, ROAD_COLOR), parking: () => buildParking(def, p),
     conduit: () => buildConduit({points: [[-1.2, 0.5], [0.4, 0.5], [0.4, -0.7]], size: '4', count: 2, style: 'pipe', height: 0, r0: 0, r1: 0.9}, CONDUIT_COLOR),   // library thumbnail sample
-    synergy100: buildSynergy100, rack: () => buildRack(def, p), table: () => buildTable(def, p), tracker: () => buildTracker(def, p), iso: () => buildISO(def), person: buildPerson}[def.kind]();
+    synergy100: buildSynergy100, rack: () => buildRack(def, p), roofmount: () => buildRoofArray(def, p), table: () => buildTable(def, p), tracker: () => buildTracker(def, p), iso: () => buildISO(def), person: buildPerson}[def.kind]();
   const t = normalize(g, def.kind !== 'tracker'); if (_tpl.size > 120) _tpl.clear(); _tpl.set(key, t); return t;
 }
 const stdThumbs = new Map();
@@ -1797,7 +1840,7 @@ function rebuildExtrude(it) {
 /* ---------- pitched roofs on drawn buildings ----------
    The roof is set out on the footprint's bounding rectangle, squared to its longest wall, so it is exact for rectangular
    buildings. The pitch is the true angle of the roof surface from horizontal; the eaves meet the top of the wall at the wall line. */
-const lastRoof = {roof: 'gable', pitch: 18.435, ridge: 'long', overhang: 0.3, flip: '0', roofColor: '#5a5f66'};   // 18.435° = 4 in 12
+const lastRoof = {roof: 'gable', pitch: 18.435, ridge: 'long', overhang: 0.3, flip: '0', roofColor: '#5d6168', roofTex: 'shingle'};   // 18.435° = 4 in 12
 const ROOF_T = 0.1;                       // thickness of the roof deck drawn on gable and shed roofs (m)
 function roofInfo(p) {
   const pts = p.points; let best = 0, th = 0;
@@ -1811,9 +1854,41 @@ function roofInfo(p) {
   const area = p.roof === 'hip' ? (L + 2 * o) * (S + 2 * o) / Math.cos(Math.atan(t)) : slope * (L + 2 * o) * (p.roof === 'shed' ? 1 : 2);
   return {L, S, t, o, rise, slope, area, angle: alongU ? th : th + Math.PI / 2, cx: uc * c - vc * s, cz: uc * s + vc * c};
 }
+/* Roof finishes: a repeating pattern drawn in grey so the roof colour tints it. [across the slope, along the ridge] = the size of one repeat in metres. */
+const ROOF_TEX = {plain: {label: 'Plain', color: '#5a5f66'}, shingle: {label: 'Asphalt shingles', color: '#5d6168', size: [0.56, 1.0]}, slate: {label: 'Slate', color: '#56606b', size: [0.8, 0.9]},
+  corr: {label: 'Corrugated metal', color: '#b3bac0', size: [1.2, 0.272], metal: true}, seam: {label: 'Standing-seam metal', color: '#7b858e', size: [1.2, 0.406], metal: true}, tile: {label: 'Clay tile', color: '#b8653f', size: [0.33, 0.4]}};
+const _roofTex = {};
+function roofTexture(kind) {
+  if (_roofTex[kind]) return _roofTex[kind];
+  const N = 256, cv = document.createElement('canvas'); cv.width = cv.height = N; const x = cv.getContext('2d'); let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const grey = v => { const c = Math.round(Math.max(0, Math.min(1, v)) * 255); return `rgb(${c},${c},${c})`; };
+  x.fillStyle = grey(0.9); x.fillRect(0, 0, N, N);
+  if (kind === 'shingle' || kind === 'slate') {                 // courses run along the ridge (bands across the canvas), tabs staggered course to course
+    const courses = 4, tabs = 3, cw = N / courses, th = N / tabs, sl = kind === 'slate';
+    for (let c = 0; c < courses; c++) for (let t = -1; t <= tabs; t++) {
+      const y = t * th + (c % 2) * th / 2; x.fillStyle = grey(0.9 - rnd() * (sl ? 0.3 : 0.14)); x.fillRect(c * cw, y, cw, th);
+      x.fillStyle = grey(sl ? 0.35 : 0.55); x.fillRect(c * cw, y, cw, sl ? 2 : 1.5);
+    }
+    for (let c = 0; c < courses; c++) { const g = x.createLinearGradient(c * cw, 0, c * cw + cw, 0); g.addColorStop(0, 'rgba(0,0,0,.42)'); g.addColorStop(0.12, 'rgba(0,0,0,.08)'); g.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = g; x.fillRect(c * cw, 0, cw, N); }
+    if (!sl) for (let k = 0; k < 2600; k++) { x.fillStyle = `rgba(0,0,0,${rnd() * 0.16})`; x.fillRect(rnd() * N, rnd() * N, 1.5, 1.5); }           // mineral granules
+  } else if (kind === 'corr' || kind === 'tile') {              // ribs run up the slope (stripes down the canvas)
+    const ribs = kind === 'corr' ? 4 : 2;
+    for (let y = 0; y < N; y++) { const w = Math.cos(y / N * ribs * 2 * Math.PI); x.fillStyle = grey(kind === 'corr' ? 0.72 + 0.26 * w : 0.62 + 0.36 * Math.pow((w + 1) / 2, 0.7)); x.fillRect(0, y, N, 1); }
+    if (kind === 'tile') { const g = x.createLinearGradient(0, 0, N, 0); g.addColorStop(0, 'rgba(0,0,0,.5)'); g.addColorStop(0.1, 'rgba(0,0,0,.1)'); g.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = g; x.fillRect(0, 0, N, N); }
+    else for (let k = 0; k < 4; k++) { x.fillStyle = grey(0.45); x.beginPath(); x.arc(N * 0.5, (k + 0.5) * N / 4 - N / 8, 2.2, 0, 7); x.fill(); }      // a row of screws
+  } else if (kind === 'seam') {
+    x.fillStyle = grey(0.92); x.fillRect(0, 0, N, N); x.fillStyle = grey(0.45); x.fillRect(0, 0, N, 5); x.fillStyle = grey(1); x.fillRect(0, 5, N, 5); x.fillStyle = grey(0.7); x.fillRect(0, 10, N, 3);
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+  const sz = ROOF_TEX[kind].size; t.repeat.set(1 / sz[0], 1 / sz[1]); return _roofTex[kind] = t;
+}
+function roofSkinMat(p) {
+  const kind = ROOF_TEX[p.roofTex] ? p.roofTex : 'plain', d = ROOF_TEX[kind];
+  return new THREE.MeshStandardMaterial({color: p.roofColor || lastRoof.roofColor, roughness: d.metal ? 0.42 : 0.85, metalness: d.metal ? 0.55 : 0.05, map: kind === 'plain' ? null : roofTexture(kind)});
+}
 function buildRoof(p, wallMat) {
   const f = roofInfo(p), {L, S, t, o, rise} = f, drop = o * t, g = new THREE.Group(); g.userData.roof = true;
-  const skin = new THREE.MeshStandardMaterial({color: p.roofColor || lastRoof.roofColor, roughness: 0.8, metalness: 0.1});
+  const skin = roofSkinMat(p);
   g.position.set(f.cx, p.height, f.cz); g.rotation.y = -f.angle + (p.roof === 'shed' && p.flip === '1' ? Math.PI : 0);
   const prism = (outline, len, m, isSkin) => {          // outline in (across, up), run along the ridge
     const geo = new THREE.ExtrudeGeometry(new THREE.Shape(outline.map(q => new THREE.Vector2(q[0], q[1]))), {depth: len, bevelEnabled: false}).translate(0, 0, -len / 2).rotateY(Math.PI / 2);
@@ -1828,10 +1903,24 @@ function buildRoof(p, wallMat) {
   } else {                                                                                                                       // hip: equal pitch on all four sides
     const a = L / 2 + o, b = S / 2 + o, r = Math.max(0, (L - S) / 2), E = [[-a, -drop, -b], [a, -drop, -b], [a, -drop, b], [-a, -drop, b]], R = [[-r, rise, 0], [r, rise, 0]];
     const tris = [E[3], E[2], R[1], E[3], R[1], R[0], E[1], E[0], R[0], E[1], R[0], R[1], E[2], E[1], R[1], E[0], E[3], R[0], E[0], E[1], E[2], E[0], E[2], E[3]];
-    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat(), 3)); geo.computeVertexNormals();
+    const uv = tris.map((v, k) => Math.floor(k / 3) === 4 || Math.floor(k / 3) === 5 ? [v[0], v[2]] : [v[2], v[0]]);      // finish runs up each face: the two hip ends are turned a quarter
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat(), 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv.flat(), 2)); geo.computeVertexNormals();
     const mesh = new THREE.Mesh(geo, skin); mesh.castShadow = mesh.receiveShadow = true; mesh.userData.roofSkin = true; g.add(mesh);
   }
   return g;
+}
+/** Does a pitched roof suit this footprint? True when the outline fills most of its bounding rectangle (the roof is set out on that rectangle). */
+function roofFits(points) { const f = roofInfo({points, roof: 'gable', pitch: 20, overhang: 0}); let A = 0; points.forEach((q, i) => { const n = points[(i + 1) % points.length]; A += q[0] * n[1] - n[0] * q[1]; }); return Math.abs(A) / 2 >= 0.8 * f.L * f.S; }
+/** Put the same roof on many buildings at once. */
+function setRoofs(ids, roof, pitch, tex) {
+  let n = 0;
+  for (const id of ids) {
+    const it = items.get(id); if (!it || it.rec.type !== 'extrude' || it.rec.params.height < 2) continue; const P = it.rec.params;
+    P.roof = roof; if (roof !== 'flat') Object.assign(P, {pitch, ridge: P.ridge || 'long', overhang: P.overhang ?? lastRoof.overhang, flip: P.flip || '0', roofTex: tex, roofColor: ROOF_TEX[tex].color});
+    rebuildExtrude(it); n++;
+  }
+  if (roof !== 'flat') Object.assign(lastRoof, {roof, pitch, roofTex: tex, roofColor: ROOF_TEX[tex].color});
+  return n;
 }
 function applyRoof(obj, rec) {            // (re)build the roof of a drawn building from its record
   obj.children.filter(c => c.userData.roof).forEach(c => { c.traverse(m => { if (m.isMesh) m.geometry.dispose(); }); obj.remove(c); });
@@ -2054,7 +2143,10 @@ function minAlong(o, n) {
 /** Put the item's base flush on a surface at `point` with surface normal `normal`; optionally tilt it to match. */
 function placeOnSurface(it, point, normal, align, onGround) {
   const o = it.obj;
-  if (align) o.quaternion.premultiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0).applyQuaternion(o.quaternion).normalize(), normal));
+  if (align && Math.abs(normal.y) < 0.9995 && normal.y > 0.05) {          // a roof slope: local X runs level along the slope, local +Z points down it, so rails sit level and tilt legs lift the upper edge
+    const X = new THREE.Vector3(0, 1, 0).cross(normal).normalize(), Z = X.clone().cross(normal).normalize();
+    o.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, normal.clone(), Z));
+  } else if (align) o.quaternion.premultiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0).applyQuaternion(o.quaternion).normalize(), normal));
   const p = point.clone(); if (onGround) { p.x = snapN(p.x); p.z = snapN(p.z); }
   o.position.copy(p); o.updateMatrixWorld(true);
   o.position.addScaledVector(normal, p.dot(normal) - minAlong(o, normal));     // slide along the normal until it just touches
@@ -2625,6 +2717,14 @@ function renderInspector() {
   if (!ids.length) { box.innerHTML = '<div class="empty">Nothing selected.<br>Click an object, or drag a model from the library into the scene.</div>'; return; }
   if (ids.length > 1) {
     box.innerHTML = `<div style="margin:4px 0"><b>${ids.length} items selected</b></div><div class="btns"><button data-act="dup">Duplicate</button><button data-act="lock">Lock</button><button class="danger" data-act="del">Delete</button></div><div class="btns"><button data-act="conduit" title="Adds one conduit run through the selected items, in the order you selected them">Connect with conduit</button></div><div class="muted">The gizmo moves / rotates / scales them together. Shift-click to add or remove items.</div>`;
+    const nb = ids.filter(i => items.get(i).rec.type === 'extrude' && items.get(i).rec.params.height >= 2).length;
+    if (nb) box.innerHTML += `<div class="arr"><b>Roofs for ${nb} building${nb > 1 ? 's' : ''}</b>
+      <div class="fr"><span class="muted">Style</span><select id="bulkRoof">${[['gable', 'Gable (two slopes)'], ['hip', 'Hip (four slopes)'], ['shed', 'Shed (one slope)'], ['flat', 'Flat']].map(([v, l]) => `<option value="${v}" ${lastRoof.roof === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="fr"><span class="muted">Pitch (°)</span><input type="number" id="bulkPitch" step="0.5" min="0.5" max="75" value="${r3(lastRoof.pitch)}"></div>
+      <div class="fr"><span class="muted">Rise in 12</span><input type="number" id="bulkPitch12" step="0.25" min="0.1" max="45" value="${r3(Math.tan(rad(lastRoof.pitch)) * 12)}"></div>
+      <div class="fr"><span class="muted">Finish</span><select id="bulkTex">${Object.entries(ROOF_TEX).map(([k, d]) => `<option value="${k}" ${lastRoof.roofTex === k ? 'selected' : ''}>${d.label}</option>`).join('')}</select></div>
+      <div class="btns" style="margin-bottom:0"><button class="primary" data-act="roofs">Apply roofs</button></div>
+      <div class="muted small">Each roof is set out on its building's bounding rectangle, so it is exact for rectangular buildings and approximate for L- or T-shaped ones.</div></div>`;
     return;
   }
   const it = items.get(ids[0]), r = it.rec, o = it.obj;
@@ -2656,6 +2756,7 @@ function renderInspector() {
       ${rf === 'hip' ? '' : `<div class="fr"><span class="muted">${rf === 'shed' ? 'Slope runs' : 'Ridge runs'}</span>${sel('ridge', rf === 'shed' ? [['long', 'Across the short side'], ['short', 'Across the long side']] : [['long', 'Along the long side'], ['short', 'Along the short side']])}</div>`}
       ${rf === 'shed' ? `<div class="fr"><span class="muted">High side</span>${sel('flip', [['0', 'This side'], ['1', 'Opposite side']])}</div>` : ''}
       <div class="fr"><span class="muted">${lenLabel('Overhang (m)')}</span><input type="number" step="${UNITS === 'ft' ? 0.25 : 0.05}" min="0" max="${ru(3)}" data-r="overhang" value="${ru(P.overhang)}"></div>
+      <div class="fr"><span class="muted">Roof finish</span>${sel('roofTex', Object.entries(ROOF_TEX).map(([k, d]) => [k, d.label]))}</div>
       <div class="fr"><span class="muted">Roof colour</span><span><input type="color" data-r="roofColor" value="${P.roofColor || lastRoof.roofColor}"></span></div>
       <div class="muted" style="font-size:11px" data-roofinfo></div>`;
   }
@@ -2694,6 +2795,8 @@ function syncFields() {
 $('#insp').addEventListener('input', e => {
   if (e.target.id === 'uniform') { uniform = e.target.checked; return; }
   if (e.target.id && e.target.id.startsWith('ar')) { onArrayField(e.target); return; }
+  if (e.target.id === 'bulkPitch') { const v = parseFloat(e.target.value); if (v > 0) $('#bulkPitch12').value = r3(Math.tan(rad(v)) * 12); return; }
+  if (e.target.id === 'bulkPitch12') { const v = parseFloat(e.target.value); if (v > 0) $('#bulkPitch').value = r3(deg(Math.atan(v / 12))); return; }
   const pk = e.target.dataset.p;
   if (pk) {       // parameter of a true-scale part (e.g. ground-mount tilt)
     const it = items.get([...sel][0]); if (!it) return;
@@ -2709,15 +2812,16 @@ $('#insp').addEventListener('input', e => {
   if (rk) {       // roof of a drawn building
     const it = items.get([...sel][0]); if (!it) return; const P = it.rec.params; let v = e.target.value;
     if (rk === 'roof') {
-      if (v !== 'flat') for (const k of ['pitch', 'ridge', 'overhang', 'flip', 'roofColor']) if (P[k] == null) P[k] = lastRoof[k];   // first roof on this building: start from the last one you set up
+      if (v !== 'flat') for (const k of ['pitch', 'ridge', 'overhang', 'flip', 'roofColor', 'roofTex']) if (P[k] == null) P[k] = lastRoof[k];   // first roof on this building: start from the last one you set up
       P.roof = v; if (v !== 'flat') lastRoof.roof = v; rebuildExtrude(it); renderInspector(); return;
     }
+    if (rk === 'roofTex') { P.roofTex = v; P.roofColor = ROOF_TEX[v].color; lastRoof.roofTex = v; lastRoof.roofColor = P.roofColor; rebuildExtrude(it); renderInspector(); return; }     // each finish starts in its usual colour
     if (rk === 'pitch' || rk === 'pitch12' || rk === 'overhang') {
       v = parseFloat(v); if (Number.isNaN(v)) return;
       if (rk === 'pitch12') P.pitch = r4(deg(Math.atan(Math.max(0.1, v) / 12))); else if (rk === 'pitch') P.pitch = Math.max(0.5, Math.min(75, v)); else P.overhang = Math.max(0, Math.min(3, fromU(v)));
       const other = $(`#insp [data-r=${rk === 'pitch' ? 'pitch12' : 'pitch'}]`); if (other && rk !== 'overhang') other.value = rk === 'pitch' ? r3(Math.tan(rad(P.pitch)) * 12) : r3(P.pitch);
     } else P[rk] = v;
-    for (const k of ['pitch', 'ridge', 'overhang', 'flip', 'roofColor']) if (P[k] != null) lastRoof[k] = P[k];
+    for (const k of ['pitch', 'ridge', 'overhang', 'flip', 'roofColor', 'roofTex']) if (P[k] != null) lastRoof[k] = P[k];
     rebuildExtrude(it); syncFields(); return;
   }
   const f = e.target.dataset.f; if (!f) return;
@@ -2748,6 +2852,10 @@ $('#insp').addEventListener('click', e => {
   else if (act === 'ground') { it.obj.position.y = 0; syncFields(); commit(); }
   else if (act === 'edit') setEditing(editing ? null : it.rec.id);
   else if (act === 'conduit') connectSelWithConduit();
+  else if (act === 'roofs') {
+    const pitch = Math.max(0.5, Math.min(75, parseFloat($('#bulkPitch').value) || lastRoof.pitch)), n = setRoofs(ids, $('#bulkRoof').value, pitch, $('#bulkTex').value);
+    commit(); toast(`${$('#bulkRoof').value === 'flat' ? 'Flat roofs' : 'Roofs'} set on ${n} building${n === 1 ? '' : 's'}`, 2500);
+  }
   else if (act === 'array') {
     if (ARR.nA * ARR.nB > 600) { toast('That is a lot of items (max 600). Try smaller counts.'); return; }
     if (ARR.nA * ARR.nB < 2) { toast('Set a count above 1 in at least one direction'); return; }
@@ -2803,7 +2911,8 @@ async function importFootprints() {
         if (area < 8 || Math.abs(cx - (m.ox || 0)) > m.w / 2 || Math.abs(cz - (m.oz || 0)) > m.h / 2) continue;                 // tiny sheds, and buildings whose middle is outside the map
         if (have.some(bx => cx >= bx.min.x && cx <= bx.max.x && cz >= bx.min.z && cz <= bx.max.z)) continue;                    // you already built here
         const hd = +f.properties.HEIGHT, h = hd >= 2.4 ? hd : area > 1500 ? 8 : area > 400 ? 6 : f.properties.OCC_CLS === 'Residential' ? 4.5 : 5;
-        recs.push(newRec('extrude', {name: nextName('Building (auto)'), grp: 'Buildings from map', pos: [r4(cx), 0, r4(cz)], color: '#d8d2c4', params: {points: pts.map(q => [r4(q[0] - cx), r4(q[1] - cz)]), height: r3(h), facade: f.properties.OCC_CLS === 'Residential' || area < 400 ? 'windows' : 'office'}}));
+        const lp = pts.map(q => [r4(q[0] - cx), r4(q[1] - cz)]), rf = area < 900 && roofFits(lp) ? {roof: lastRoof.roof === 'flat' ? 'gable' : lastRoof.roof, pitch: lastRoof.pitch, ridge: 'long', overhang: lastRoof.overhang, flip: '0', roofTex: lastRoof.roofTex, roofColor: lastRoof.roofColor} : {};
+        recs.push(newRec('extrude', {name: nextName('Building (auto)'), grp: 'Buildings from map', pos: [r4(cx), 0, r4(cz)], color: '#d8d2c4', params: {points: lp, ...rf, height: r3(rf.roof ? Math.max(2.6, h - 1.5) : h), facade: f.properties.OCC_CLS === 'Residential' || area < 400 ? 'windows' : 'office'}}));
       }
     }
     for (const r of recs) { r.name = nextName('Building (auto)'); await spawn(r); }
