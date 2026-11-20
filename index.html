@@ -1093,6 +1093,19 @@ const STD = [
      {k: 'r1', label: 'Riser at end (m)', type: 'number', min: 0, max: 30, step: 0.05, def: 0}
    ]},
   /* ---- site: roads and parking ---- */
+  {id: 'roof', cat: 'Buildings', name: 'Roof (parametric)', short: 'Roof', kind: 'roof', dims: null, dimLabel: '', conf: 'standard',
+   src: 'Generic roof shapes. Pitch is the true angle of the roof surface from horizontal.',
+   note: 'A roof on its own, separate from any building. Length runs along the ridge and Width is the span between the two eave walls; both are measured at the walls, and the overhang is added outside them. The item\'s base is the top of the walls, so set its height to the wall height, or use Add roof in a building\'s Properties to have it sized and placed for you.',
+   params: [
+     {k: 'style', label: 'Style', type: 'select', options: [['gable', 'Gable (two slopes)'], ['hip', 'Hip (four slopes)'], ['shed', 'Shed (one slope)']], def: 'gable'},
+     {k: 'len', label: 'Length (m)', type: 'number', min: 1, max: 200, step: 0.1, def: 12},
+     {k: 'span', label: 'Width (m)', type: 'number', min: 1, max: 100, step: 0.1, def: 8},
+     {k: 'pitch', label: 'Pitch (°)', type: 'number', min: 0.5, max: 75, step: 0.5, def: 18.5},
+     {k: 'overhang', label: 'Overhang (m)', type: 'number', min: 0, max: 3, step: 0.05, def: 0.3},
+     {k: 'finish', label: 'Finish', type: 'select', options: [['shingle', 'Asphalt shingles'], ['slate', 'Slate'], ['corr', 'Corrugated metal'], ['seam', 'Standing-seam metal'], ['tile', 'Clay tile'], ['plain', 'Plain']], def: 'shingle'},
+     {k: 'tone', label: 'Colour', type: 'select', options: [['auto', 'Usual for the finish'], ['#3b3f45', 'Charcoal'], ['#6b7178', 'Grey'], ['#b3bac0', 'Light grey'], ['#f0f0ec', 'White'], ['#6b4a35', 'Brown'], ['#9b3a2e', 'Red'], ['#b8653f', 'Terracotta'], ['#3f5e46', 'Green'], ['#35506b', 'Blue']], def: 'auto'},
+     {k: 'ends', label: 'Gable-end walls', type: 'select', options: [['#d8d2c4', 'Cream'], ['#f0f0ec', 'White'], ['#9aa0a6', 'Grey'], ['#8a6f55', 'Wood'], ['#9b3a2e', 'Barn red']], def: '#d8d2c4'}
+   ]},
   {id: 'road-run', cat: 'Site', name: 'Road / driveway (draw a line)', short: 'Road', kind: 'road', dims: null, dimLabel: '', conf: 'standard',
    src: 'Generic paved road. Default 6.7 m (22 ft) is a common two-lane local road / fire-access width; markings follow the usual US pattern (3 m dash, 9 m gap).',
    note: 'A visual aid, not a civil design: set the width to match the site. Trace it over the satellite underlay. Curves are drawn as short straight legs — add more points for a smoother bend.',
@@ -1120,7 +1133,7 @@ const STD = [
 const STD_BY = Object.fromEntries(STD.map(d => [d.id, d]));
 const CONF_LABEL = {datasheet: 'Datasheet', quote: 'ZEN quote', web: 'Web spec', standard: 'Standard'};
 const dimText = d => d.dims ? (d.kind === 'person' ? (UNITS === 'ft' ? '5 ft 9 in tall' : '1750 mm tall') : UNITS === 'ft' ? d.dims.map(v => +(v / 25.4).toFixed(1)).join(' × ') + ' in' : d.dims.map(v => +v.toFixed(1)).join(' × ') + ' mm')
-  : ({table: 'parametric', roofmount: 'parametric · rails, feet, tilt legs', rack: 'parametric · strut on two posts', xfmr: '150–1000 kVA', fence: 'draw · 6 ft high', conduit: 'draw · 1/2"–4" trade sizes', road: 'draw · set the width', parking: 'parametric · 9 × 18 ft stalls', tracker: '30 × 26 ft array · 21 ft pole'}[d.kind] || '3 units + Manager');
+  : ({table: 'parametric', roof: 'parametric · gable, hip or shed', roofmount: 'parametric · rails, feet, tilt legs', rack: 'parametric · strut on two posts', xfmr: '150–1000 kVA', fence: 'draw · 6 ft high', conduit: 'draw · 1/2"–4" trade sizes', road: 'draw · set the width', parking: 'parametric · 9 × 18 ft stalls', tracker: '30 × 26 ft array · 21 ft pole'}[d.kind] || '3 units + Manager');
 
 const _stdMats = new Map();
 function stdMat(key, make) { if (!_stdMats.has(key)) _stdMats.set(key, make()); return _stdMats.get(key); }
@@ -1766,8 +1779,9 @@ function stdTemplate(def, params = {}) {
     fence: () => buildFence({points: [[-3.048, 0], [3.048, 0]], closed: '0', height: CHAIN.H, spacing: 3.048}),   // library thumbnail sample
     road: () => buildRoad({points: [[-9, 3], [0, 3], [6, -3], [14, -3]], width: 6.7, marking: 'dash'}, ROAD_COLOR), parking: () => buildParking(def, p),
     conduit: () => buildConduit({points: [[-1.2, 0.5], [0.4, 0.5], [0.4, -0.7]], size: '4', count: 2, style: 'pipe', height: 0, r0: 0, r1: 0.9}, CONDUIT_COLOR),   // library thumbnail sample
-    synergy100: buildSynergy100, rack: () => buildRack(def, p), roofmount: () => buildRoofArray(def, p), table: () => buildTable(def, p), tracker: () => buildTracker(def, p), iso: () => buildISO(def), person: buildPerson}[def.kind]();
-  const t = normalize(g, def.kind !== 'tracker'); if (_tpl.size > 120) _tpl.clear(); _tpl.set(key, t); return t;
+    synergy100: buildSynergy100, rack: () => buildRack(def, p), roof: () => buildRoofPart(def, p), roofmount: () => buildRoofArray(def, p), table: () => buildTable(def, p), tracker: () => buildTracker(def, p), iso: () => buildISO(def), person: buildPerson}[def.kind]();
+  const t = normalize(g, def.kind !== 'tracker'); if (def.kind === 'roof') g.position.y = 0;      // a roof's base is the top of the walls: its eaves hang below that
+  if (_tpl.size > 120) _tpl.clear(); _tpl.set(key, t); return t;
 }
 const stdThumbs = new Map();
 function stdThumb(def) { if (!stdThumbs.has(def.id)) stdThumbs.set(def.id, renderThumb(stdTemplate(def))); return stdThumbs.get(def.id); }
@@ -1911,22 +1925,27 @@ function buildRoof(p, wallMat) {
 }
 /** Does a pitched roof suit this footprint? True when the outline fills most of its bounding rectangle (the roof is set out on that rectangle). */
 function roofFits(points) { const f = roofInfo({points, roof: 'gable', pitch: 20, overhang: 0}); let A = 0; points.forEach((q, i) => { const n = points[(i + 1) % points.length]; A += q[0] * n[1] - n[0] * q[1]; }); return Math.abs(A) / 2 >= 0.8 * f.L * f.S; }
-/** Put the same roof on many buildings at once. */
-function setRoofs(ids, roof, pitch, tex) {
-  let n = 0;
-  for (const id of ids) {
-    const it = items.get(id); if (!it || it.rec.type !== 'extrude' || it.rec.params.height < 2) continue; const P = it.rec.params;
-    P.roof = roof; if (roof !== 'flat') Object.assign(P, {pitch, ridge: P.ridge || 'long', overhang: P.overhang ?? lastRoof.overhang, flip: P.flip || '0', roofTex: tex, roofColor: ROOF_TEX[tex].color});
-    rebuildExtrude(it); n++;
-  }
-  if (roof !== 'flat') Object.assign(lastRoof, {roof, pitch, roofTex: tex, roofColor: ROOF_TEX[tex].color});
-  return n;
+/** Adds a roof for a building as its own item: sized to the footprint's bounding rectangle, turned to match, sitting on top of the walls. */
+async function addRoofFor(b) {
+  const P = b.rec.params, f = roofInfo({points: P.points, roof: 'gable', pitch: 20, overhang: 0, ridge: 'long'}), o = b.obj; o.updateMatrixWorld(true);
+  const at = o.localToWorld(new THREE.Vector3(f.cx, P.height, f.cz));
+  const rec = newRec('std', {name: `Roof — ${b.rec.name}`, stdId: 'roof', grp: b.rec.grp, pos: [r4(at.x), r4(at.y), r4(at.z)], rot: [0, r4(o.rotation.y - f.angle), 0],
+    params: {...stdDefaults(STD_BY.roof), ...lastRoofPart, len: r3(f.L), span: r3(f.S)}});
+  await spawn(rec); setSel([rec.id]); renderOutliner(); commit();
+  toast('Roof added as its own item. Set its style, pitch and finish in Properties.', 3500);
+}
+/** The stand-alone roof part: ridge along local X, base (y = 0) at the top of the walls. */
+const lastRoofPart = {};                  // style, pitch, overhang, finish and colours of the roof you set up last: the next roof starts from them
+function buildRoofPart(def, p) {
+  const L = Math.max(1, +p.len || 12), S = Math.max(1, +p.span || 8), fin = ROOF_TEX[p.finish] ? p.finish : 'shingle';
+  return buildRoof({points: [[-L / 2, -S / 2], [L / 2, -S / 2], [L / 2, S / 2], [-L / 2, S / 2]], height: 0, roof: p.style, pitch: p.pitch, ridge: L >= S ? 'long' : 'short', overhang: p.overhang, flip: '0',
+    roofTex: fin, roofColor: p.tone && p.tone !== 'auto' ? p.tone : ROOF_TEX[fin].color}, PM(p.ends || '#d8d2c4', 0.9, 0));
 }
 function applyRoof(obj, rec) {            // (re)build the roof of a drawn building from its record
   obj.children.filter(c => c.userData.roof).forEach(c => { c.traverse(m => { if (m.isMesh) m.geometry.dispose(); }); obj.remove(c); });
   applyFacade(obj, rec);
-  const p = rec.params; if (rec.type !== 'extrude' || !p.roof || p.roof === 'flat' || p.points.length < 3) return;
-  obj.add(buildRoof(p, obj.material));
+  const p = rec.params;                    // roofs are separate items now: a roof saved inside a building by an older version is dropped
+  if (rec.type === 'extrude' && p) for (const k of ['roof', 'pitch', 'ridge', 'overhang', 'flip', 'roofColor', 'roofTex']) delete p[k];
 }
 
 /* ---------- generated facades on drawn buildings: windows, glazing bands or siding laid out in whole bays (about 3 m wide) and storeys (about 3 m high) on every wall,
@@ -2149,7 +2168,7 @@ function placeOnSurface(it, point, normal, align, onGround) {
   } else if (align) o.quaternion.premultiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0).applyQuaternion(o.quaternion).normalize(), normal));
   const p = point.clone(); if (onGround) { p.x = snapN(p.x); p.z = snapN(p.z); }
   o.position.copy(p); o.updateMatrixWorld(true);
-  o.position.addScaledVector(normal, p.dot(normal) - minAlong(o, normal));     // slide along the normal until it just touches
+  if (it.rec.stdId !== 'roof') o.position.addScaledVector(normal, p.dot(normal) - minAlong(o, normal));     // slide along the normal until it just touches (a roof keeps its wall-top base on the surface: its eaves hang lower)
   o.updateMatrixWorld(true);
 }
 /* ---------- box select: drag a rectangle over the view. Left-to-right = items fully inside; right-to-left = everything it touches ---------- */
@@ -2717,14 +2736,6 @@ function renderInspector() {
   if (!ids.length) { box.innerHTML = '<div class="empty">Nothing selected.<br>Click an object, or drag a model from the library into the scene.</div>'; return; }
   if (ids.length > 1) {
     box.innerHTML = `<div style="margin:4px 0"><b>${ids.length} items selected</b></div><div class="btns"><button data-act="dup">Duplicate</button><button data-act="lock">Lock</button><button class="danger" data-act="del">Delete</button></div><div class="btns"><button data-act="conduit" title="Adds one conduit run through the selected items, in the order you selected them">Connect with conduit</button></div><div class="muted">The gizmo moves / rotates / scales them together. Shift-click to add or remove items.</div>`;
-    const nb = ids.filter(i => items.get(i).rec.type === 'extrude' && items.get(i).rec.params.height >= 2).length;
-    if (nb) box.innerHTML += `<div class="arr"><b>Roofs for ${nb} building${nb > 1 ? 's' : ''}</b>
-      <div class="fr"><span class="muted">Style</span><select id="bulkRoof">${[['gable', 'Gable (two slopes)'], ['hip', 'Hip (four slopes)'], ['shed', 'Shed (one slope)'], ['flat', 'Flat']].map(([v, l]) => `<option value="${v}" ${lastRoof.roof === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-      <div class="fr"><span class="muted">Pitch (°)</span><input type="number" id="bulkPitch" step="0.5" min="0.5" max="75" value="${r3(lastRoof.pitch)}"></div>
-      <div class="fr"><span class="muted">Rise in 12</span><input type="number" id="bulkPitch12" step="0.25" min="0.1" max="45" value="${r3(Math.tan(rad(lastRoof.pitch)) * 12)}"></div>
-      <div class="fr"><span class="muted">Finish</span><select id="bulkTex">${Object.entries(ROOF_TEX).map(([k, d]) => `<option value="${k}" ${lastRoof.roofTex === k ? 'selected' : ''}>${d.label}</option>`).join('')}</select></div>
-      <div class="btns" style="margin-bottom:0"><button class="primary" data-act="roofs">Apply roofs</button></div>
-      <div class="muted small">Each roof is set out on its building's bounding rectangle, so it is exact for rectangular buildings and approximate for L- or T-shaped ones.</div></div>`;
     return;
   }
   const it = items.get(ids[0]), r = it.rec, o = it.obj;
@@ -2747,18 +2758,10 @@ function renderInspector() {
   if (isCond) h += `<div class="fr"><span class="muted">Colour</span><span><input type="color" data-f="color" value="${r.color}"></span></div>
     <div class="fr"><span class="muted">${isRoad ? 'Length' : 'Run length'}</span><span data-runlen></span></div>`;
   if (isExt) {
-    const P = r.params, rf = P.roof || 'flat', sel = (k, opts) => `<select data-r="${k}">${opts.map(([v, l]) => `<option value="${v}" ${String(P[k] ?? opts[0][0]) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
-    h += `<div class="fr"><span class="muted">${lenLabel(rf === 'flat' ? 'Height (m)' : 'Wall height (m)')}</span><input type="number" step="${UNITS === 'ft' ? 0.5 : 0.1}" min="0.01" data-f="height" data-len="1" value="${ru(P.height)}"></div>
-      ${P.height >= 2 ? `<div class="fr"><span class="muted">Walls</span>${sel('facade', FACADES)}</div>` : ''}
-      <div class="fr"><span class="muted">Roof</span>${sel('roof', [['flat', 'Flat'], ['gable', 'Gable (two slopes)'], ['hip', 'Hip (four slopes)'], ['shed', 'Shed (one slope)']])}</div>`;
-    if (rf !== 'flat') h += `<div class="fr"><span class="muted">Pitch (°)</span><input type="number" step="0.1" min="0.5" max="75" data-r="pitch" value="${r3(P.pitch)}"></div>
-      <div class="fr"><span class="muted">Pitch (rise in 12)</span><input type="number" step="0.25" min="0.1" max="45" data-r="pitch12" value="${r3(Math.tan(rad(P.pitch)) * 12)}"></div>
-      ${rf === 'hip' ? '' : `<div class="fr"><span class="muted">${rf === 'shed' ? 'Slope runs' : 'Ridge runs'}</span>${sel('ridge', rf === 'shed' ? [['long', 'Across the short side'], ['short', 'Across the long side']] : [['long', 'Along the long side'], ['short', 'Along the short side']])}</div>`}
-      ${rf === 'shed' ? `<div class="fr"><span class="muted">High side</span>${sel('flip', [['0', 'This side'], ['1', 'Opposite side']])}</div>` : ''}
-      <div class="fr"><span class="muted">${lenLabel('Overhang (m)')}</span><input type="number" step="${UNITS === 'ft' ? 0.25 : 0.05}" min="0" max="${ru(3)}" data-r="overhang" value="${ru(P.overhang)}"></div>
-      <div class="fr"><span class="muted">Roof finish</span>${sel('roofTex', Object.entries(ROOF_TEX).map(([k, d]) => [k, d.label]))}</div>
-      <div class="fr"><span class="muted">Roof colour</span><span><input type="color" data-r="roofColor" value="${P.roofColor || lastRoof.roofColor}"></span></div>
-      <div class="muted" style="font-size:11px" data-roofinfo></div>`;
+    const P = r.params, sel = (k, opts) => `<select data-r="${k}">${opts.map(([v, l]) => `<option value="${v}" ${String(P[k] ?? opts[0][0]) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+    h += `<div class="fr"><span class="muted">${lenLabel('Height (m)')}</span><input type="number" step="${UNITS === 'ft' ? 0.5 : 0.1}" min="0.01" data-f="height" data-len="1" value="${ru(P.height)}"></div>
+      ${P.height >= 2 ? `<div class="fr"><span class="muted">Walls</span>${sel('facade', FACADES)}</div>
+      <div class="btns"><button data-act="addroof" title="Adds a roof as its own item, sized and turned to fit this building and sitting on top of its walls. Change its style, pitch, overhang and finish in the roof's own Properties; move or delete it without touching the building.">Add roof</button></div>` : ''}`;
   }
   if (!isAsset && !sd) h += `<div class="fr"><span class="muted">Colour</span><span><input type="color" data-f="color" value="${r.color}"></span></div>
     <div class="fr"><span class="muted">Opacity</span><input type="range" min="0.1" max="1" step="0.05" data-f="opacity" value="${r.opacity}"></div>`;
@@ -2785,7 +2788,7 @@ function syncFields() {
   });
   const d = $('#insp [data-dims]');
   if (d) { const s = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3()); d.textContent = `${fmtL(s.x)} × ${fmtL(s.z)}, h ${fmtL(s.y)}`; }
-  const ri = $('#insp [data-roofinfo]');
+  const ri = null;
   if (ri) { const P = items.get(id).rec.params, f = roofInfo(P), top = o.position.y + P.height + f.rise;
     ri.textContent = `${P.roof === 'shed' ? 'High edge' : 'Ridge'} ${fmtL(top)} above ground (${fmtL(f.rise)} above the walls) · rafter length ${fmtL(f.slope)} · roof surface ${fmtArea(f.area)}. Turn on Surface snap to lay panels flat on the slope.`; }
   const rl = $('#insp [data-runlen]'), rr = items.get(id).rec;
@@ -2805,6 +2808,7 @@ $('#insp').addEventListener('input', e => {
     if (def.type === 'number') { if (Number.isNaN(v)) return; if (e.target.dataset.len) v = fromU(v); v = Math.max(def.min, Math.min(def.max, v)); }
     it.rec.params = {...(it.rec.params || stdDefaults(STD_BY[it.rec.stdId])), [pk]: v};
     if (it.rec.type === 'conduit') lastConduit[pk] = v;      // the next run you draw starts with these settings
+    if (it.rec.stdId === 'roof' && pk !== 'len' && pk !== 'span') lastRoofPart[pk] = v;
     if (it.rec.type === 'road' && pk === 'width') lastRoadWidth = v;
     refill(it); if (editing) buildHandles(); syncFields(); return;
   }
@@ -2852,10 +2856,7 @@ $('#insp').addEventListener('click', e => {
   else if (act === 'ground') { it.obj.position.y = 0; syncFields(); commit(); }
   else if (act === 'edit') setEditing(editing ? null : it.rec.id);
   else if (act === 'conduit') connectSelWithConduit();
-  else if (act === 'roofs') {
-    const pitch = Math.max(0.5, Math.min(75, parseFloat($('#bulkPitch').value) || lastRoof.pitch)), n = setRoofs(ids, $('#bulkRoof').value, pitch, $('#bulkTex').value);
-    commit(); toast(`${$('#bulkRoof').value === 'flat' ? 'Flat roofs' : 'Roofs'} set on ${n} building${n === 1 ? '' : 's'}`, 2500);
-  }
+  else if (act === 'addroof') queue(() => addRoofFor(it));
   else if (act === 'array') {
     if (ARR.nA * ARR.nB > 600) { toast('That is a lot of items (max 600). Try smaller counts.'); return; }
     if (ARR.nA * ARR.nB < 2) { toast('Set a count above 1 in at least one direction'); return; }
@@ -2911,8 +2912,7 @@ async function importFootprints() {
         if (area < 8 || Math.abs(cx - (m.ox || 0)) > m.w / 2 || Math.abs(cz - (m.oz || 0)) > m.h / 2) continue;                 // tiny sheds, and buildings whose middle is outside the map
         if (have.some(bx => cx >= bx.min.x && cx <= bx.max.x && cz >= bx.min.z && cz <= bx.max.z)) continue;                    // you already built here
         const hd = +f.properties.HEIGHT, h = hd >= 2.4 ? hd : area > 1500 ? 8 : area > 400 ? 6 : f.properties.OCC_CLS === 'Residential' ? 4.5 : 5;
-        const lp = pts.map(q => [r4(q[0] - cx), r4(q[1] - cz)]), rf = area < 900 && roofFits(lp) ? {roof: lastRoof.roof === 'flat' ? 'gable' : lastRoof.roof, pitch: lastRoof.pitch, ridge: 'long', overhang: lastRoof.overhang, flip: '0', roofTex: lastRoof.roofTex, roofColor: lastRoof.roofColor} : {};
-        recs.push(newRec('extrude', {name: nextName('Building (auto)'), grp: 'Buildings from map', pos: [r4(cx), 0, r4(cz)], color: '#d8d2c4', params: {points: lp, ...rf, height: r3(rf.roof ? Math.max(2.6, h - 1.5) : h), facade: f.properties.OCC_CLS === 'Residential' || area < 400 ? 'windows' : 'office'}}));
+        recs.push(newRec('extrude', {name: nextName('Building (auto)'), grp: 'Buildings from map', pos: [r4(cx), 0, r4(cz)], color: '#d8d2c4', params: {points: pts.map(q => [r4(q[0] - cx), r4(q[1] - cz)]), height: r3(h), facade: f.properties.OCC_CLS === 'Residential' || area < 400 ? 'windows' : 'office'}}));
       }
     }
     for (const r of recs) { r.name = nextName('Building (auto)'); await spawn(r); }
