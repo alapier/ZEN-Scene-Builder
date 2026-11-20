@@ -1095,15 +1095,17 @@ const STD = [
   /* ---- site: roads and parking ---- */
   {id: 'roof', cat: 'Buildings', name: 'Roof (parametric)', short: 'Roof', kind: 'roof', dims: null, dimLabel: '', conf: 'standard',
    src: 'Generic roof shapes. Pitch is the true angle of the roof surface from horizontal.',
-   note: 'A roof on its own, separate from any building. Length runs along the ridge and Width is the span between the two eave walls; both are measured at the walls, and the overhang is added outside them. The item\'s base is the top of the walls, so set its height to the wall height, or use Add roof in a building\'s Properties to have it sized and placed for you.',
+   note: 'A roof on its own, separate from any building. Length runs along the ridge and Width is the span between the two eave walls; both are measured at the walls, and the overhangs are added outside them. A roof made with Add roof follows the building\'s shape in sections instead, and has no Length or Width. Typical overhangs are 12 to 24 in at the eaves and 6 to 12 in at gable ends. Pitch 22.5° is about 5 in 12. The item\'s base is the top of the walls, so set its height to the wall height, or use Add roof in a building\'s Properties to have it sized and placed for you.',
    params: [
      {k: 'style', label: 'Style', type: 'select', options: [['gable', 'Gable (two slopes)'], ['hip', 'Hip (four slopes)'], ['shed', 'Shed (one slope)']], def: 'gable'},
      {k: 'len', label: 'Length (m)', type: 'number', min: 1, max: 200, step: 0.1, def: 12},
      {k: 'span', label: 'Width (m)', type: 'number', min: 1, max: 100, step: 0.1, def: 8},
-     {k: 'pitch', label: 'Pitch (°)', type: 'number', min: 0.5, max: 75, step: 0.5, def: 18.5},
-     {k: 'overhang', label: 'Overhang (m)', type: 'number', min: 0, max: 3, step: 0.05, def: 0.3},
+     {k: 'pitch', label: 'Pitch (°)', type: 'number', min: 0.5, max: 75, step: 0.5, def: 22.5},
+     {k: 'overhang', label: 'Eave overhang (m)', type: 'number', min: 0, max: 1.5, step: 0.05, def: 0.45},
+     {k: 'rake', label: 'Gable-end overhang (m)', type: 'number', min: 0, max: 1, step: 0.05, def: 0.3},
      {k: 'finish', label: 'Finish', type: 'select', options: [['shingle', 'Asphalt shingles'], ['slate', 'Slate'], ['corr', 'Corrugated metal'], ['seam', 'Standing-seam metal'], ['tile', 'Clay tile'], ['plain', 'Plain']], def: 'shingle'},
      {k: 'tone', label: 'Colour', type: 'select', options: [['auto', 'Usual for the finish'], ['#3b3f45', 'Charcoal'], ['#6b7178', 'Grey'], ['#b3bac0', 'Light grey'], ['#f0f0ec', 'White'], ['#6b4a35', 'Brown'], ['#9b3a2e', 'Red'], ['#b8653f', 'Terracotta'], ['#3f5e46', 'Green'], ['#35506b', 'Blue']], def: 'auto'},
+     {k: 'trim', label: 'Trim (fascia, soffit)', type: 'select', options: [['#f2f1ec', 'White'], ['#d8d2c4', 'Cream'], ['#3a3d41', 'Charcoal'], ['#4a3728', 'Dark bronze'], ['#8a6f55', 'Wood']], def: '#f2f1ec'},
      {k: 'ends', label: 'Gable-end walls', type: 'select', options: [['#d8d2c4', 'Cream'], ['#f0f0ec', 'White'], ['#9aa0a6', 'Grey'], ['#8a6f55', 'Wood'], ['#9b3a2e', 'Barn red']], def: '#d8d2c4'}
    ]},
   {id: 'road-run', cat: 'Site', name: 'Road / driveway (draw a line)', short: 'Road', kind: 'road', dims: null, dimLabel: '', conf: 'standard',
@@ -1925,21 +1927,119 @@ function buildRoof(p, wallMat) {
 }
 /** Does a pitched roof suit this footprint? True when the outline fills most of its bounding rectangle (the roof is set out on that rectangle). */
 function roofFits(points) { const f = roofInfo({points, roof: 'gable', pitch: 20, overhang: 0}); let A = 0; points.forEach((q, i) => { const n = points[(i + 1) % points.length]; A += q[0] * n[1] - n[0] * q[1]; }); return Math.abs(A) / 2 >= 0.8 * f.L * f.S; }
-/** Adds a roof for a building as its own item: sized to the footprint's bounding rectangle, turned to match, sitting on top of the walls. */
+/* ---------- roofs shaped to the building ----------
+   Real roofs follow the plan of the house: an L- or T-shaped house has a main roof over its widest part and a lower roof over each wing that runs
+   into it, forming valleys. roofWings() splits a footprint into those rectangles; buildWing() draws one of them with real eave details: the deck
+   overhangs the walls (eaves 12-24 in, rake ends 6-12 in are typical), a fascia board closes the eave, barge boards close the rake, a soffit closes
+   the underside, and caps cover the ridge and hips. All wings share one eave height and one pitch, so a narrower wing has a lower ridge. */
+const ROOF_DECK = 0.16;                   // depth of the eave edge (rafter tail + sheathing), metres
+/** Split a footprint (building-local [x, z] points) into roof wings. Returns {angle, cx, cz, L, S, wings}: wings are [x, z, length along ridge, span,
+    turned (1 = ridge along local Z), end type at -ridge, end type at +ridge, extension at -ridge, extension at +ridge] in a frame turned by `angle`
+    about (cx, cz). End types: 'free' (an outside end: gable or hip, by style) or 'join' (runs into a bigger wing, extended by the given length). */
+function roofWings(points) {
+  let best = 0, th = 0; points.forEach((a, i) => { const b = points[(i + 1) % points.length], d = Math.hypot(b[0] - a[0], b[1] - a[1]); if (d > best) { best = d; th = Math.atan2(b[1] - a[1], b[0] - a[0]); } });
+  const c = Math.cos(th), sn = Math.sin(th), Q = points.map(q => [q[0] * c + q[1] * sn, -q[0] * sn + q[1] * c]), tol = 0.45;
+  const axis = k => { const v = [...new Set(Q.map(q => q[k]))].sort((a, b) => a - b), out = []; for (const x of v) { if (out.length && x - out.at(-1)[0] < tol) out.at(-1).push(x); else out.push([x]); } return out.map(g => g.reduce((a, b) => a + b, 0) / g.length); };
+  const U = axis(0), V = axis(1), snap = (x, A) => A.reduce((b, a) => Math.abs(a - x) < Math.abs(b - x) ? a : b), P = Q.map(q => [snap(q[0], U), snap(q[1], V)]);
+  const inside = (u, v) => { let inn = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[i], b = P[j]; if ((a[1] > v) !== (b[1] > v) && u < (b[0] - a[0]) * (v - a[1]) / (b[1] - a[1]) + a[0]) inn = !inn; } return inn; };
+  const nu = U.length - 1, nv = V.length - 1, cell = []; let areaIn = 0;
+  for (let i = 0; i < nu; i++) { cell.push([]); for (let k = 0; k < nv; k++) { const on = inside((U[i] + U[i + 1]) / 2, (V[k] + V[k + 1]) / 2); cell[i].push(on); if (on) areaIn += (U[i + 1] - U[i]) * (V[k + 1] - V[k]); } }
+  const u0 = U[0], u1 = U.at(-1), v0 = V[0], v1 = V.at(-1), uc = (u0 + u1) / 2, vc = (v0 + v1) / 2, lu = u1 - u0, lv = v1 - v0;
+  const base = {angle: th, cx: uc * c - vc * sn, cz: uc * sn + vc * c, L: Math.max(lu, lv), S: Math.min(lu, lv)}, one = () => ({...base, wings: [[0, 0, r3(base.L), r3(base.S), lu >= lv ? 0 : 1, 'free', 'free', 0, 0]]});
+  if (nu < 1 || nv < 1 || nu * nv > 900) return one();
+  // maximal rectangles of inside cells (grown from every cell, both growth orders)
+  const full = (i0, i1, k0, k1) => { for (let i = i0; i <= i1; i++) for (let k = k0; k <= k1; k++) if (!cell[i][k]) return false; return true; }, seen = new Set(), rects = [];
+  for (let i = 0; i < nu; i++) for (let k = 0; k < nv; k++) if (cell[i][k]) for (const first of [0, 1]) {
+    let i0 = i, i1 = i, k0 = k, k1 = k;
+    const gu = () => { while (i0 > 0 && full(i0 - 1, i0 - 1, k0, k1)) i0--; while (i1 < nu - 1 && full(i1 + 1, i1 + 1, k0, k1)) i1++; }, gv = () => { while (k0 > 0 && full(i0, i1, k0 - 1, k0 - 1)) k0--; while (k1 < nv - 1 && full(i0, i1, k1 + 1, k1 + 1)) k1++; };
+    if (first) { gu(); gv(); } else { gv(); gu(); }
+    const key = `${i0},${i1},${k0},${k1}`; if (!seen.has(key)) { seen.add(key); rects.push({u0: U[i0], u1: U[i1 + 1], v0: V[k0], v1: V[k1 + 1]}); }
+  }
+  const W = r => r.u1 - r.u0, Hh = r => r.v1 - r.v0, span = r => Math.min(W(r), Hh(r)), eps = 0.05;
+  const big = rects.filter(r => span(r) >= 1.2).sort((a, b) => span(b) - span(a) || W(b) * Hh(b) - W(a) * Hh(a));
+  const done = [], wings = [];
+  const wing = (r, alongU, eN, eP, xN, xP) => { const L = alongU ? W(r) : Hh(r), S = alongU ? Hh(r) : W(r); if (L < 0.6 || S < 1.0) return; wings.push([r3((r.u0 + r.u1) / 2 - uc), r3((r.v0 + r.v1) / 2 - vc), r3(L), r3(S), alongU ? 0 : 1, eN, eP, r3(xN), r3(xP)]); };
+  for (const R of big) {
+    let pieces = [{...R, whole: true}];
+    for (const D of done) {
+      const next = [];
+      for (const q of pieces) {
+        const ou = Math.min(q.u1, D.u1) - Math.max(q.u0, D.u0), ov = Math.min(q.v1, D.v1) - Math.max(q.v0, D.v0);
+        if (ou <= eps || ov <= eps) { next.push(q); continue; }                                   // does not overlap this bigger wing
+        const dAlongU = W(D) >= Hh(D), dSpan = span(D);
+        const strip = (o, alongU, nearNeg) => { const lat = alongU ? Hh(o) : W(o), perp = alongU !== dAlongU;      // a stub sticking out of D: its ridge runs out from D
+          if (lat > dSpan + 0.3) next.push({...o, own: true}); else next.push({...o, alongU, join: nearNeg ? 'N' : 'P', ext: perp ? dSpan / 2 : Math.min(1, dSpan / 4)}); };
+        if (q.u0 < D.u0 - eps || q.u1 > D.u1 + eps) { if (q.u0 < D.u0 - eps) strip({u0: q.u0, u1: D.u0, v0: q.v0, v1: q.v1}, true, false); if (q.u1 > D.u1 + eps) strip({u0: D.u1, u1: q.u1, v0: q.v0, v1: q.v1}, true, true); }
+        else { if (q.v0 < D.v0 - eps) strip({u0: q.u0, u1: q.u1, v0: q.v0, v1: D.v0}, false, false); if (q.v1 > D.v1 + eps) strip({u0: q.u0, u1: q.u1, v0: D.v1, v1: q.v1}, false, true); }
+      }
+      pieces = next;
+    }
+    for (const q of pieces) {
+      if (q.alongU === undefined) wing(q, W(q) >= Hh(q), 'free', 'free', 0, 0);
+      else wing(q, q.alongU, q.join === 'N' ? 'join' : 'free', q.join === 'P' ? 'join' : 'free', q.join === 'N' ? q.ext : 0, q.join === 'P' ? q.ext : 0);
+    }
+    if (pieces.length) done.push(R);
+  }
+  let covered = 0; for (let i = 0; i < nu; i++) for (let k = 0; k < nv; k++) if (cell[i][k]) { const mu = (U[i] + U[i + 1]) / 2, mv = (V[k] + V[k + 1]) / 2; if (done.some(r => mu > r.u0 && mu < r.u1 && mv > r.v0 && mv < r.v1)) covered += (U[i + 1] - U[i]) * (V[k + 1] - V[k]); }
+  let polyA = 0; Q.forEach((q, i) => { const n = Q[(i + 1) % Q.length]; polyA += q[0] * n[1] - n[0] * q[1]; }); polyA = Math.abs(polyA) / 2;
+  if (!wings.length || covered < 0.6 * areaIn || areaIn < 0.7 * polyA) return one();       // an odd shape (not built from right angles): fall back to one roof over the whole outline
+  if (wings.length > 16) wings.length = 16;                                                 // the biggest sections come first
+  return {...base, wings};
+}
+/** One roof wing. Local frame: ridge along X, y = 0 at the top of the walls. ends = [type at -X, type at +X] from 'gable' | 'hip' | 'join'. */
+function buildWing(L, S, ends, exts, o) {
+  const g = new THREE.Group(), k = kit(g), t = Math.tan(rad(o.pitch)), th = Math.atan(t), ov = o.overhang, b = S / 2 + ov, e = -ov * t, h = S / 2 * t, T = ROOF_DECK;
+  const a = [0, 1].map(i => L / 2 + (ends[i] === 'gable' ? o.rake : ends[i] === 'hip' ? ov : exts[i])), rg = [0, 1].map(i => ends[i] === 'hip' ? Math.max(0, L / 2 - S / 2) : a[i]);       // eave end and ridge end, measured from the middle
+  const xN = -a[0], xP = a[1], rN = -rg[0], rP = rg[1], cs = Math.cos(th), pos = [], uv = [];
+  const tri = (A, B, C, f) => { for (const v of [A, B, C]) { pos.push(v[0], v[1], v[2]); const q = f(v); uv.push(q[0], q[1]); } };
+  const side = v => [(b - Math.abs(v[2])) / cs, v[0]], endF = (xe) => v => [Math.abs(xe - v[0]) / cs, v[2]];           // [distance up the slope, distance along the eave], metres
+  tri([xN, e, b], [xP, e, b], [rP, h, 0], side); tri([xN, e, b], [rP, h, 0], [rN, h, 0], side);
+  tri([xP, e, -b], [xN, e, -b], [rN, h, 0], side); tri([xP, e, -b], [rN, h, 0], [rP, h, 0], side);
+  if (ends[0] === 'hip') tri([xN, e, -b], [xN, e, b], [rN, h, 0], endF(xN));
+  if (ends[1] === 'hip') tri([xP, e, b], [xP, e, -b], [rP, h, 0], endF(xP));
+  const top = new THREE.BufferGeometry(); top.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); top.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); top.computeVertexNormals();
+  const deck = new THREE.Mesh(top, o.skin); deck.userData.roofSkin = true; g.add(deck);
+  const under = top.clone(); under.translate(0, -T, 0); g.add(new THREE.Mesh(under, o.soffit));                          // soffit: the underside of the overhang
+  const fw = 0.025, fh = T + 0.03, fy = e - T / 2 + 0.005;
+  for (const sg of [1, -1]) k.box(xP - xN + 2 * fw, fh, fw, o.trim, (xP + xN) / 2, fy, sg * (b + fw / 2));                // fascia boards along the eaves
+  [0, 1].forEach(i => { const x = i ? xP : xN, sx = i ? 1 : -1;
+    if (ends[i] === 'hip') { k.box(fw, fh, 2 * b + 2 * fw, o.trim, x + sx * fw / 2, fy, 0);
+      for (const sg of [1, -1]) k.rod(new THREE.Vector3(x, e + 0.02, sg * b), new THREE.Vector3(i ? rP : rN, h + 0.02, 0), 0.045, o.cap, 6); }      // hip caps
+    if (ends[i] === 'gable') {
+      const len = Math.hypot(b, h - e);
+      for (const sg of [1, -1]) { const bd = k.box(fw, fh, len + 0.02, o.trim, x + sx * fw / 2, (e + h) / 2 - T / 2 + 0.005, sg * b / 2); bd.rotation.x = sg * th; }      // barge boards up the rake
+      const wx = sx * L / 2, wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute([wx, 0, -S / 2, wx, 0, S / 2, wx, h, 0], 3)); wg.computeVertexNormals();
+      g.add(new THREE.Mesh(wg, o.wall));                                                                                    // gable-end wall, on the wall line
+    }
+  });
+  if (rP - rN > 0.3) k.box(rP - rN, 0.04, 0.3, o.cap, (rP + rN) / 2, h + 0.012, 0);                                         // ridge cap
+  return g;
+}
+/** Adds a roof for a building as its own item: split into wings that follow the footprint, turned to match, sitting on top of the walls. */
 async function addRoofFor(b) {
-  const P = b.rec.params, f = roofInfo({points: P.points, roof: 'gable', pitch: 20, overhang: 0, ridge: 'long'}), o = b.obj; o.updateMatrixWorld(true);
+  const P = b.rec.params, f = roofWings(P.points), o = b.obj; o.updateMatrixWorld(true);
   const at = o.localToWorld(new THREE.Vector3(f.cx, P.height, f.cz));
   const rec = newRec('std', {name: `Roof — ${b.rec.name}`, stdId: 'roof', grp: b.rec.grp, pos: [r4(at.x), r4(at.y), r4(at.z)], rot: [0, r4(o.rotation.y - f.angle), 0],
-    params: {...stdDefaults(STD_BY.roof), ...lastRoofPart, len: r3(f.L), span: r3(f.S)}});
+    params: {...stdDefaults(STD_BY.roof), ...lastRoofPart, len: r3(f.L), span: r3(f.S), wings: f.wings}});
   await spawn(rec); setSel([rec.id]); renderOutliner(); commit();
-  toast('Roof added as its own item. Set its style, pitch and finish in Properties.', 3500);
+  toast(f.wings.length > 1 ? `Roof added in ${f.wings.length} sections that follow the building's shape. Set its style, pitch and finish in Properties.` : 'Roof added as its own item. Set its style, pitch and finish in Properties.', 4500);
 }
-/** The stand-alone roof part: ridge along local X, base (y = 0) at the top of the walls. */
-const lastRoofPart = {};                  // style, pitch, overhang, finish and colours of the roof you set up last: the next roof starts from them
+/** The stand-alone roof part: base (y = 0) at the top of the walls. One wing from Length and Width, or the wings stored by Add roof. */
+const lastRoofPart = {};                  // style, pitch, overhangs, finish and colours of the roof you set up last: the next roof starts from them
 function buildRoofPart(def, p) {
-  const L = Math.max(1, +p.len || 12), S = Math.max(1, +p.span || 8), fin = ROOF_TEX[p.finish] ? p.finish : 'shingle';
-  return buildRoof({points: [[-L / 2, -S / 2], [L / 2, -S / 2], [L / 2, S / 2], [-L / 2, S / 2]], height: 0, roof: p.style, pitch: p.pitch, ridge: L >= S ? 'long' : 'short', overhang: p.overhang, flip: '0',
-    roofTex: fin, roofColor: p.tone && p.tone !== 'auto' ? p.tone : ROOF_TEX[fin].color}, PM(p.ends || '#d8d2c4', 0.9, 0));
+  const fin = ROOF_TEX[p.finish] ? p.finish : 'shingle', col = p.tone && p.tone !== 'auto' ? p.tone : ROOF_TEX[fin].color, wallM = PM(p.ends || '#d8d2c4', 0.9, 0);
+  const wings = Array.isArray(p.wings) && p.wings.length ? p.wings : [[0, 0, Math.max(1, +p.len || 12), Math.max(1, +p.span || 8), 0, 'free', 'free', 0, 0]], g = new THREE.Group();
+  if (p.style === 'shed') {                 // one plane per wing, high side on the wing's +Z side
+    for (const w of wings) { const r = buildRoof({points: [[-w[2] / 2, -w[3] / 2], [w[2] / 2, -w[3] / 2], [w[2] / 2, w[3] / 2], [-w[2] / 2, w[3] / 2]], height: 0, roof: 'shed', pitch: p.pitch, ridge: w[2] >= w[3] ? 'long' : 'short', overhang: p.overhang, flip: '0', roofTex: fin, roofColor: col}, wallM);
+      const h = new THREE.Group(); h.add(r); h.position.set(w[0], 0, w[1]); h.rotation.y = w[4] ? -Math.PI / 2 : 0; g.add(h); }
+    return g;
+  }
+  const skin = roofSkinMat({roofTex: fin, roofColor: col}), o = {pitch: Math.max(0.5, Math.min(75, +p.pitch || 20)), overhang: Math.max(0, +p.overhang || 0), rake: Math.max(0, +p.rake || 0), skin, wall: null,
+    trim: PM(p.trim || '#f2f1ec', 0.7, 0), soffit: PM(p.trim || '#f2f1ec', 0.9, 0, {side: THREE.DoubleSide}), cap: PM('#' + new THREE.Color(col).multiplyScalar(0.72).getHexString(), ROOF_TEX[fin].metal ? 0.45 : 0.85, ROOF_TEX[fin].metal ? 0.5 : 0.05)};
+  o.wall = PM(p.ends || '#d8d2c4', 0.9, 0, {side: THREE.DoubleSide});
+  const free = p.style === 'hip' ? 'hip' : 'gable';
+  for (const w of wings) { const m = buildWing(w[2], w[3], [w[5] === 'join' ? 'join' : free, w[6] === 'join' ? 'join' : free], [w[7] || 0, w[8] || 0], o); m.position.set(w[0], 0, w[1]); m.rotation.y = w[4] ? -Math.PI / 2 : 0; g.add(m); }
+  return g;
 }
 function applyRoof(obj, rec) {            // (re)build the roof of a drawn building from its record
   obj.children.filter(c => c.userData.roof).forEach(c => { c.traverse(m => { if (m.isMesh) m.geometry.dispose(); }); obj.remove(c); });
@@ -2039,8 +2139,13 @@ async function restore(state, {keepSel = false, camera: useCam = false} = {}) {
   if (useCam && state.cam) { camera.position.fromArray(state.cam.p); orbit.target.fromArray(state.cam.t); orbit.update(); }
   setSel(keep.filter(id => items.has(id)));
 }
-const undo = () => queue(async () => { if (hist.i <= 0) return; hist.i--; await restore(JSON.parse(hist.stack[hist.i]), {keepSel: true}); updateUndoBtns(); });
-const redo = () => queue(async () => { if (hist.i >= hist.stack.length - 1) return; hist.i++; await restore(JSON.parse(hist.stack[hist.i]), {keepSel: true}); updateUndoBtns(); });
+/** After stepping through history: refresh the buttons and the unsaved marker, and write the crash-recovery copy (so a reload does not bring undone work back). */
+function afterHistoryStep() {
+  updateUndoBtns(); dirty = savedStr !== null && hist.stack[hist.i] !== savedStr; updateTitle();
+  clearTimeout(autosaveT); autosaveT = setTimeout(() => SceneStore.put('__autosave__', JSON.stringify(serialize(true))).catch(console.error), 700);
+}
+const undo = () => queue(async () => { if (hist.i <= 0) return; hist.i--; await restore(JSON.parse(hist.stack[hist.i]), {keepSel: true}); afterHistoryStep(); });
+const redo = () => queue(async () => { if (hist.i >= hist.stack.length - 1) return; hist.i++; await restore(JSON.parse(hist.stack[hist.i]), {keepSel: true}); afterHistoryStep(); });
 
 /* ================= selection & gizmo ================= */
 const transform = new TransformControls(camera, canvas); scene.add(transform);
@@ -2748,7 +2853,9 @@ function renderInspector() {
   if (sd) {
     h += `<div class="spec"><b>${esc(sd.name)}</b><br>${sd.dims ? `<span>${esc(sd.dimLabel)}: <b>${esc(dimText(sd))}</b>${sd.kg ? ` · ${sd.kg} kg` : ''}</span><br>` : ''}
       <span class="badge b-${sd.conf}">${CONF_LABEL[sd.conf]}</span> <span class="muted">${esc(sd.src)}</span><br><span class="muted">${esc(sd.note || '')}</span></div>`;
+    if (r.params && Array.isArray(r.params.wings) && r.params.wings.length > 1) h += `<div class="muted small">Shaped to its building in ${r.params.wings.length} sections.</div>`;
     (sd.params || []).forEach(pm => {
+      if ((pm.k === 'len' || pm.k === 'span') && r.params && Array.isArray(r.params.wings)) return;
       const v = (r.params && r.params[pm.k] != null) ? r.params[pm.k] : pm.def;
       h += pm.type === 'select'
         ? `<div class="fr"><span class="muted">${pm.label}</span><select data-p="${pm.k}">${pm.options.map(([val, lab]) => `<option value="${val}" ${val === v ? 'selected' : ''}>${esc(lab)}</option>`).join('')}</select></div>`
@@ -3416,7 +3523,7 @@ async function boot() {
   loop();
 }
 boot();
-window.zen = {loadSceneState, SceneStore, fileAction, spawn, removeItem, renderOutliner, applyUnderlay, openMapPicker, importFootprints, buildTopoCanvas, buildSatCanvas, mapBounds, viewUnderlay, getEnv: () => env, STD, STD_BY, stdTemplate, addStdAt, transform, startMagnet, magnet, placeOnSurface, surfaceHit, THREE, scene, camera, orbit, items, lib, world, importFiles, addAssetAt, setSel, serialize, startDraw, finishDraw, get draw() { return draw; }, setView, commit, undo, redo, queue, env: () => env};
+window.zen = {roofWings, loadSceneState, SceneStore, fileAction, spawn, removeItem, renderOutliner, applyUnderlay, openMapPicker, importFootprints, buildTopoCanvas, buildSatCanvas, mapBounds, viewUnderlay, getEnv: () => env, STD, STD_BY, stdTemplate, addStdAt, transform, startMagnet, magnet, placeOnSurface, surfaceHit, THREE, scene, camera, orbit, items, lib, world, importFiles, addAssetAt, setSel, serialize, startDraw, finishDraw, get draw() { return draw; }, setView, commit, undo, redo, queue, env: () => env};
 </script>
 </body>
 </html>
