@@ -1948,7 +1948,7 @@ const ROOF_DECK = 0.16;                   // depth of the eave edge (rafter tail
 /** Split a footprint (building-local [x, z] points) into roof wings. Returns {angle, cx, cz, L, S, wings}: wings are [x, z, length along ridge, span,
     turned (1 = ridge along local Z), end type at -ridge, end type at +ridge, extension at -ridge, extension at +ridge] in a frame turned by `angle`
     about (cx, cz). End types: 'free' (an outside end: gable or hip, by style) or 'join' (runs into a bigger wing, extended by the given length). */
-function roofWings(points) {
+function roofWings(points, ms = 1.5) {        // ms = narrowest section worth its own piece, metres
   let best = 0, th = 0; points.forEach((a, i) => { const b = points[(i + 1) % points.length], d = Math.hypot(b[0] - a[0], b[1] - a[1]); if (d > best) { best = d; th = Math.atan2(b[1] - a[1], b[0] - a[0]); } });
   const c = Math.cos(th), sn = Math.sin(th), Q = points.map(q => [q[0] * c + q[1] * sn, -q[0] * sn + q[1] * c]), tol = 0.45;
   const axis = k => { const v = [...new Set(Q.map(q => q[k]))].sort((a, b) => a - b), out = []; for (const x of v) { if (out.length && x - out.at(-1)[0] < tol) out.at(-1).push(x); else out.push([x]); } return out.map(g => g.reduce((a, b) => a + b, 0) / g.length); };
@@ -1957,7 +1957,7 @@ function roofWings(points) {
   const nu = U.length - 1, nv = V.length - 1, cell = []; let areaIn = 0;
   for (let i = 0; i < nu; i++) { cell.push([]); for (let k = 0; k < nv; k++) { const on = inside((U[i] + U[i + 1]) / 2, (V[k] + V[k + 1]) / 2); cell[i].push(on); if (on) areaIn += (U[i + 1] - U[i]) * (V[k + 1] - V[k]); } }
   const u0 = U[0], u1 = U.at(-1), v0 = V[0], v1 = V.at(-1), uc = (u0 + u1) / 2, vc = (v0 + v1) / 2, lu = u1 - u0, lv = v1 - v0;
-  const base = {angle: th, cx: uc * c - vc * sn, cz: uc * sn + vc * c, L: Math.max(lu, lv), S: Math.min(lu, lv)}, one = () => ({...base, wings: [[0, 0, r3(base.L), r3(base.S), lu >= lv ? 0 : 1, 'free', 'free', 0, 0]]});
+  const base = {angle: th, cx: uc * c - vc * sn, cz: uc * sn + vc * c, L: Math.max(lu, lv), S: Math.min(lu, lv)}, one = () => ({...base, fallback: true, wings: [[0, 0, r3(base.L), r3(base.S), lu >= lv ? 0 : 1, 'free', 'free', 0, 0]]});
   if (nu < 1 || nv < 1 || nu * nv > 900) return one();
   // maximal rectangles of inside cells (grown from every cell, both growth orders)
   const full = (i0, i1, k0, k1) => { for (let i = i0; i <= i1; i++) for (let k = k0; k <= k1; k++) if (!cell[i][k]) return false; return true; }, seen = new Set(), rects = [];
@@ -1968,9 +1968,9 @@ function roofWings(points) {
     const key = `${i0},${i1},${k0},${k1}`; if (!seen.has(key)) { seen.add(key); rects.push({u0: U[i0], u1: U[i1 + 1], v0: V[k0], v1: V[k1 + 1]}); }
   }
   const W = r => r.u1 - r.u0, Hh = r => r.v1 - r.v0, span = r => Math.min(W(r), Hh(r)), eps = 0.05;
-  const big = rects.filter(r => span(r) >= 1.5).sort((a, b) => span(b) - span(a) || W(b) * Hh(b) - W(a) * Hh(a));
+  const big = rects.filter(r => span(r) >= ms).sort((a, b) => span(b) - span(a) || W(b) * Hh(b) - W(a) * Hh(a));
   const done = [], wings = [];
-  const wing = (r, alongU, eN, eP, xN, xP) => { const L = alongU ? W(r) : Hh(r), S = alongU ? Hh(r) : W(r); if (L < 0.6 || S < 1.5) return; wings.push([r3((r.u0 + r.u1) / 2 - uc), r3((r.v0 + r.v1) / 2 - vc), r3(L), r3(S), alongU ? 0 : 1, eN, eP, r3(xN), r3(xP)]); };
+  const wing = (r, alongU, eN, eP, xN, xP) => { const L = alongU ? W(r) : Hh(r), S = alongU ? Hh(r) : W(r); if (L < Math.min(0.6, ms) || S < ms) return; wings.push([r3((r.u0 + r.u1) / 2 - uc), r3((r.v0 + r.v1) / 2 - vc), r3(L), r3(S), alongU ? 0 : 1, eN, eP, r3(xN), r3(xP)]); };
   for (const R of big) {
     let pieces = [{...R, whole: true}];
     for (const D of done) {
@@ -1994,8 +1994,8 @@ function roofWings(points) {
   }
   let covered = 0; for (let i = 0; i < nu; i++) for (let k = 0; k < nv; k++) if (cell[i][k]) { const mu = (U[i] + U[i + 1]) / 2, mv = (V[k] + V[k + 1]) / 2; if (done.some(r => mu > r.u0 && mu < r.u1 && mv > r.v0 && mv < r.v1)) covered += (U[i + 1] - U[i]) * (V[k + 1] - V[k]); }
   let polyA = 0; Q.forEach((q, i) => { const n = Q[(i + 1) % Q.length]; polyA += q[0] * n[1] - n[0] * q[1]; }); polyA = Math.abs(polyA) / 2;
-  if (!wings.length || covered < 0.6 * areaIn || areaIn < 0.7 * polyA) return one();       // an odd shape (not built from right angles): fall back to one roof over the whole outline
-  if (wings.length > 16) wings.length = 16;                                                 // the biggest sections come first
+  if (!wings.length || covered < (ms < 1 ? 0.97 : 0.6) * areaIn || areaIn < (ms < 1 ? 0.9 : 0.7) * polyA) return one();       // an odd shape (not built from right angles): fall back to one roof over the whole outline
+  if (ms >= 1 && wings.length > 16) wings.length = 16;                                                 // the biggest sections come first
   return {...base, wings};
 }
 /** All the wings of one roof, drawn as a single clean surface. Each wing is a simple roof (two slopes, plus a sloping end where it is hipped); where
@@ -2066,14 +2066,34 @@ function buildWingRoof(wings, o, free) {
   });
   return g;
 }
-/** Adds a roof for a building as its own item: split into wings that follow the footprint, turned to match, sitting on top of the walls. */
-async function addRoofFor(b) {
+/** Adds a roof for a building as its own item: split into wings that follow the footprint, turned to match, sitting on top of the walls.
+    The roof remembers its building (roofOf), so the building's Properties can offer Remove roof and never stacks a second roof on top. */
+const roofsOf = id => [...items.values()].filter(i => i.rec.stdId === 'roof' && i.rec.roofOf === id);
+async function addRoofFor(b, quiet) {
   const P = b.rec.params, f = roofWings(P.points), o = b.obj; o.updateMatrixWorld(true);
   const at = o.localToWorld(new THREE.Vector3(f.cx, P.height, f.cz));
-  const rec = newRec('std', {name: `Roof — ${b.rec.name}`, stdId: 'roof', grp: b.rec.grp, pos: [r4(at.x), r4(at.y), r4(at.z)], rot: [0, r4(o.rotation.y - f.angle), 0],
+  const rec = newRec('std', {name: `Roof — ${b.rec.name}`, stdId: 'roof', grp: b.rec.grp, roofOf: b.rec.id, pos: [r4(at.x), r4(at.y), r4(at.z)], rot: [0, r4(o.rotation.y - f.angle), 0],
     params: {...stdDefaults(STD_BY.roof), ...lastRoofPart, len: r3(f.L), span: r3(f.S), wings: f.wings}});
-  await spawn(rec); setSel([rec.id]); renderOutliner(); commit();
+  await spawn(rec); if (quiet) return rec;
+  setSel([rec.id]); renderOutliner(); commit();
   toast(f.wings.length > 1 ? `Roof added in ${f.wings.length} sections that follow the building's shape. Set its style, pitch and finish in Properties.` : 'Roof added as its own item. Set its style, pitch and finish in Properties.', 4500);
+}
+/** Replaces one building by its rectangular sections: one plain box-shaped building per rectangle of the footprint, grouped under the building's name,
+    so each section can have its own height, walls and roof. The outline is squared up first (corners within about 0.45 m of a common line are put on it). */
+async function splitBuilding(b) {
+  const P = b.rec.params, f = roofWings(P.points, 0.4), o = b.obj; o.updateMatrixWorld(true);
+  if (f.fallback || f.wings.length < 2) { toast('This building cannot be split: it is a single rectangle, or its outline is not made of right-angled sections.', 6000); return; }
+  const c = Math.cos(f.angle), sn = Math.sin(f.angle), uc = f.cx * c + f.cz * sn, vc = -f.cx * sn + f.cz * c, G = b.rec.grp || b.rec.name, had = roofsOf(b.rec.id), recs = [];
+  f.wings.forEach((w, n) => {
+    const u = uc + w[0], v = vc + w[1], at = o.localToWorld(new THREE.Vector3(u * c - v * sn, 0, u * sn + v * c)), hu = (w[4] ? w[3] : w[2]) / 2, hv = (w[4] ? w[2] : w[3]) / 2;
+    recs.push(newRec('extrude', {name: `${b.rec.name} — section ${n + 1}`, grp: G, pos: [r4(at.x), r4(b.rec.pos[1]), r4(at.z)], rot: [0, r4(o.rotation.y - f.angle), 0], color: b.rec.color, opacity: b.rec.opacity,
+      params: {points: [[-hu, -hv], [hu, -hv], [hu, hv], [-hu, hv]].map(q => [r4(q[0]), r4(q[1])]), height: P.height, ...(P.facade ? {facade: P.facade} : {})}}));
+  });
+  had.forEach(r => removeItem(r.rec.id)); removeItem(b.rec.id);
+  const made = []; for (const r of recs) made.push(await spawn(r));
+  if (had.length) for (const m of made) await addRoofFor(m, true);                 // it had a roof: give each section its own
+  setSel(recs.map(r => r.id)); renderOutliner(); commit();
+  toast(`${b.rec.name} split into ${recs.length} sections` + (had.length ? ', each with its own roof.' : '. Select a section to add or remove its roof.'), 5000);
 }
 /** The stand-alone roof part: base (y = 0) at the top of the walls. One wing from Length and Width, or the wings stored by Add roof. */
 const lastRoofPart = {};                  // style, pitch, overhangs, finish and colours of the roof you set up last: the next roof starts from them
@@ -2919,7 +2939,10 @@ function renderInspector() {
     const P = r.params, sel = (k, opts) => `<select data-r="${k}">${opts.map(([v, l]) => `<option value="${v}" ${String(P[k] ?? opts[0][0]) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
     h += `<div class="fr"><span class="muted">${lenLabel('Height (m)')}</span><input type="number" step="${UNITS === 'ft' ? 0.5 : 0.1}" min="0.01" data-f="height" data-len="1" value="${ru(P.height)}"></div>
       ${P.height >= 2 ? `<div class="fr"><span class="muted">Walls</span>${sel('facade', FACADES)}</div>
-      <div class="btns"><button data-act="addroof" title="Adds a roof as its own item, sized and turned to fit this building and sitting on top of its walls. Change its style, pitch, overhang and finish in the roof's own Properties; move or delete it without touching the building.">Add roof</button></div>` : ''}`;
+      <div class="btns">${roofsOf(r.id).length
+        ? '<button data-act="delroof" class="danger" title="Deletes the roof that was added for this building">Remove roof</button><button data-act="selroof" title="Selects this building\'s roof so you can change its style, pitch and finish">Edit roof</button>'
+        : '<button data-act="addroof" title="Adds a roof as its own item, sized and turned to fit this building and sitting on top of its walls. Change its style, pitch, overhang and finish in the roof\'s own Properties.">Add roof</button>'}
+        ${(w => !w.fallback && w.wings.length > 1 ? `<button data-act="split" title="Replaces this building by its ${w.wings.length} rectangular sections, each a separate building you can give its own height, walls and roof">Split into ${w.wings.length} sections</button>` : '')(roofWings(P.points, 0.4))}</div>` : ''}`;
   }
   if (!isAsset && !sd) h += `<div class="fr"><span class="muted">Colour</span><span><input type="color" data-f="color" value="${r.color}"></span></div>
     <div class="fr"><span class="muted">Opacity</span><input type="range" min="0.1" max="1" step="0.05" data-f="opacity" value="${r.opacity}"></div>`;
@@ -3015,6 +3038,9 @@ $('#insp').addEventListener('click', e => {
   else if (act === 'edit') setEditing(editing ? null : it.rec.id);
   else if (act === 'conduit') connectSelWithConduit();
   else if (act === 'addroof') queue(() => addRoofFor(it));
+  else if (act === 'delroof') { roofsOf(it.rec.id).forEach(x => removeItem(x.rec.id)); renderOutliner(); renderInspector(); commit(); toast('Roof removed', 1800); }
+  else if (act === 'selroof') setSel(roofsOf(it.rec.id).map(x => x.rec.id));
+  else if (act === 'split') queue(() => splitBuilding(it));
   else if (act === 'array') {
     if (ARR.nA * ARR.nB > 600) { toast('That is a lot of items (max 600). Try smaller counts.'); return; }
     if (ARR.nA * ARR.nB < 2) { toast('Set a count above 1 in at least one direction'); return; }
@@ -3574,7 +3600,7 @@ async function boot() {
   loop();
 }
 boot();
-window.zen = {roofWings, loadSceneState, SceneStore, fileAction, spawn, removeItem, renderOutliner, applyUnderlay, openMapPicker, importFootprints, buildTopoCanvas, buildSatCanvas, mapBounds, viewUnderlay, getEnv: () => env, STD, STD_BY, stdTemplate, addStdAt, transform, startMagnet, magnet, placeOnSurface, surfaceHit, THREE, scene, camera, orbit, items, lib, world, importFiles, addAssetAt, setSel, serialize, startDraw, finishDraw, get draw() { return draw; }, setView, commit, undo, redo, queue, env: () => env};
+window.zen = {roofWings, splitBuilding, addRoofFor, loadSceneState, SceneStore, fileAction, spawn, removeItem, renderOutliner, applyUnderlay, openMapPicker, importFootprints, buildTopoCanvas, buildSatCanvas, mapBounds, viewUnderlay, getEnv: () => env, STD, STD_BY, stdTemplate, addStdAt, transform, startMagnet, magnet, placeOnSurface, surfaceHit, THREE, scene, camera, orbit, items, lib, world, importFiles, addAssetAt, setSel, serialize, startDraw, finishDraw, get draw() { return draw; }, setView, commit, undo, redo, queue, env: () => env};
 </script>
 </body>
 </html>
